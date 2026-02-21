@@ -1,1 +1,16 @@
+# Never commit any data (HIPAA safety)
+data/
+data/**
+*.csv
+*.xlsx
+*.xls
+*.parquet
+*.json
+*.pkl
+*.joblib
+*.db
+
+# Environment / secrets
 .venv/
+.env
+.env.*
