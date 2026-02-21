@@ -11,4 +11,13 @@ def load_burn_data(file_name="synthetic_data.csv"):
     return pd.read_csv(path)
 
 df = load_burn_data()
-print(df.head())
+
+print("COLUMNS:", df.columns.tolist())
+# --- Feature engineering: Baux Score = Age + %TBSA ---
+# Update these column names if your CSV uses different names
+# --- Feature engineering: Baux Score = age + %TBSA ---
+df["age"] = pd.to_numeric(df["age"], errors="coerce")
+df["tbsa_2nd_3rd"] = pd.to_numeric(df["tbsa_2nd_3rd"], errors="coerce")  # %TBSA
+df["baux_score"] = df["age"] + df["tbsa_2nd_3rd"]
+
+print(df[["age", "tbsa_2nd_3rd", "baux_score"]].head())
