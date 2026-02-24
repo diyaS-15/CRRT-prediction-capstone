@@ -116,14 +116,11 @@ engineered_cols = [
     "burn_severity_tier",        
 ]
 # Printing 
-print("\n" + "=" * 55)
-print("  ENGINEERED FEATURES — summary stats")
-print("=" * 55)
+print("Engineered features: ")
 for col in engineered_cols:
     if col in df.columns:
         s = pd.to_numeric(df[col], errors="coerce")
         print(f"  {col:<35} mean={s.mean():.2f}  missing={s.isna().sum()}")
-print("=" * 55)
 
 
 
