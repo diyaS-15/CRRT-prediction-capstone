@@ -1,16 +1,24 @@
-# Never commit any data (HIPAA safety)
+# --- HIPAA / PHI: NEVER commit raw data ---
 data/
 data/**
+**/data/
+**/data/**
+
+# common sensitive data file types anywhere
 *.csv
 *.xlsx
 *.xls
 *.parquet
-*.json
-*.pkl
-*.joblib
+*.feather
+*.sav
+*.dta
 *.db
+*.sqlite
+*.sqlite3
 
-# Environment / secrets
-.venv/
-.env
-.env.*
+# OS / editor noise
+.DS_Store
+.vscode/
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
