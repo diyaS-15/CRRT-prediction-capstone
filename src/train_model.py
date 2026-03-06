@@ -3,7 +3,7 @@ import os
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.preprocessing import StandardScaler
 
-from clean_missing import clean_missing_values
+from src.clean_missing import clean_missing_values
 clean_missing_values("synthetic_data.csv", "cleaned_data.csv")
 
 df = pd.read_csv(os.path.join("data", "cleaned_data.csv"))
