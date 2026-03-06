@@ -2,6 +2,7 @@ import pandas as pd
 import os
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.preprocessing import StandardScaler
+from sklearn.metrics import (accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix)
 
 from src.clean_missing import clean_missing_values
 clean_missing_values("synthetic_data.csv", "cleaned_data.csv")
@@ -43,3 +44,9 @@ top_risk.to_csv("results/top10_high_risk_predictions.csv", index=False)
 print("\nSaved: results/top10_high_risk_predictions.csv")
 
 print("trained")
+
+y_pred = model.predict(X)
+y_proba = model.predict_proba(X)[:, 1]
+
+print(accuracy_score(y, y_pred), precision_score(y, y_pred), recall_score(y, y_pred),f1_score(y, y_pred), roc_auc_score(y, y_proba))
+
