@@ -66,16 +66,6 @@ def engineer_features(dfog=pd.DataFrame) -> pd.DataFrame:
     
     # FEATURES 
 
-    print("COLUMNS:", df.columns.tolist())
-    # --- Feature engineering: Baux Score = Age + %TBSA ---
-    # Update these column names if your CSV uses different names
-    # --- Feature engineering: Baux Score = age + %TBSA ---
-    df["age"] = pd.to_numeric(df["age"], errors="coerce")
-    df["tbsa_2nd_3rd"] = pd.to_numeric(df["tbsa_2nd_3rd"], errors="coerce")  # %TBSA
-    df["baux_score"] = df["age"] + df["tbsa_2nd_3rd"]
-
-    print(df[["age", "tbsa_2nd_3rd", "baux_score"]].head())
-
     # Revised Baux Score Feature (Age + TBSA + 17), 17=clinically validated value for AKI 
     df["inhalation_injury"] = df["inhalation_injury"].str.strip().str.lower()
     df["inhalation_flag"] = df["inhalation_injury"].map(lambda x: 1 if x in {"yes", "y", "true", "1"} else 0)
