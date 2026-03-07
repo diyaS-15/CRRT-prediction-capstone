@@ -2,7 +2,7 @@ import pandas as pd
 import os
 import numpy as np 
 import sys 
-from typing import Tuple 
+from typing import Tuple
 
 # Public API, names other files can access 
 __all__ = [
@@ -19,7 +19,6 @@ TARGET_COL = "crrt_within_48h"
 FEATURE_COLS = [
     "age",
     "tbsa_2nd_3rd",
-    "baux_score",
     "inhalation_flag",
     "revised_baux_score",
     "hours_injury_to_admission",
@@ -28,6 +27,8 @@ FEATURE_COLS = [
     "fluid_overload_flag",
     "burn_severity_tier",
     "urine_output_per_kg",
+    "carboxyhemoglobin_risk_flag",
+    "hypothermia_flag"
 ]
 
 # HELPER FUNCTIONS 
@@ -116,6 +117,18 @@ def engineer_features(dfog=pd.DataFrame) -> pd.DataFrame:
     print("\nUrine Output per kg feature:")
     print(df[["total_urine_output_ml_first_24h", "weight_kg", "urine_output_per_kg", "low_urine_output_flag"]].head())
 
+    # Carboxyhemoglobin risk flag, clinical threshold >=25% for CO poisioning 
+    df["carboxyhemoglobin"] = pd.to_numeric(df["carboxyhemoglobin"], errors="coerce")
+    df["carboxyhemoglobin_risk_flag"] = (df["carboxyhemoglobin"] >= 25).astype(int)
+    print("\nCarboxyhemoglobin Risk Flag feature:")
+    print(df[["carboxyhemoglobin", "carboxyhemoglobin_risk_flag"]].head())
+
+    # Hypothermia risk fglag, <36 clinical indicator of high AKI risk 
+    df["initial_temp_c"] = pd.to_numeric(df["initial_temp_c"], errors="coerce")
+    df["hypothermia_flag"] = (df["initial_temp_c"] < 36.0).astype(int)
+    print("\nHypothermia Flag feature:")
+    print(df[["initial_temp_c", "hypothermia_flag"]].head())
+
     # Engineered Features 
     engineered_cols = [
         "baux_score",                
@@ -128,7 +141,9 @@ def engineer_features(dfog=pd.DataFrame) -> pd.DataFrame:
         "fluid_overload_flag",       
         "burn_severity_tier",  
         "urine_output_per_kg",
-              
+        "carboxyhemoglobin_risk_flag",
+        "hypothermia_flag"
+
     ]
     # Printing 
     print("Engineered features: ")
