@@ -27,6 +27,7 @@ FEATURE_COLS = [
     "fluid_balance_24h",
     "fluid_overload_flag",
     "burn_severity_tier",
+    "urine_output_per_kg",
 ]
 
 # HELPER FUNCTIONS 
@@ -106,6 +107,15 @@ def engineer_features(dfog=pd.DataFrame) -> pd.DataFrame:
     print("\nBurn Severity Tier feature:")
     print(df["burn_severity_tier"].map(tier_labels).value_counts(dropna=False))
 
+    # Urine output per kilogram of bodyweight, AKI standard <0.5 mL/kg/hr for 6+ hours signals kidney failure 
+    # normalize weight 
+    df["weight_kg"] = pd.to_numeric(df.get("weight_kg"), errors="coerce")
+    df["urine_output_per_kg"] = (df["total_urine_output_ml_first_24h"] / df["weight_kg"].replace(0, np.nan))
+    # flag when below aki standard 
+    df["low_urine_output_flag"] = (df["urine_output_per_kg"] < 12).astype(int)  
+    print("\nUrine Output per kg feature:")
+    print(df[["total_urine_output_ml_first_24h", "weight_kg", "urine_output_per_kg", "low_urine_output_flag"]].head())
+
     # Engineered Features 
     engineered_cols = [
         "baux_score",                
@@ -116,7 +126,9 @@ def engineer_features(dfog=pd.DataFrame) -> pd.DataFrame:
         "crrt_within_48h",           
         "fluid_balance_24h",         
         "fluid_overload_flag",       
-        "burn_severity_tier",        
+        "burn_severity_tier",  
+        "urine_output_per_kg",
+              
     ]
     # Printing 
     print("Engineered features: ")
