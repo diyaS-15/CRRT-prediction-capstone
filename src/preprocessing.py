@@ -61,6 +61,19 @@ def assign_severity_tier(score):
         return 2   
     else:
         return 3  
+# vaue to each pre-exisiting conditions associated w/ AKI risk 
+def _comorbidity_score(val):
+    if pd.isna(val):
+            return 0
+    s = str(val).strip().lower()
+    score = 0
+    if "ckd" in s or "chronic kidney" in s or "renal failure" in s:
+        score += 3
+    if "diabetes" in s or "diabetic" in s:
+        score += 2
+    if "hypertension" in s or "htn" in s:
+        score += 1
+    return score
 
 # function so other files can call without rerunning 
 def engineer_features(dfog=pd.DataFrame) -> pd.DataFrame: 
@@ -128,6 +141,11 @@ def engineer_features(dfog=pd.DataFrame) -> pd.DataFrame:
     df["hypothermia_flag"] = (df["initial_temp_c"] < 36.0).astype(int)
     print("\nHypothermia Flag feature:")
     print(df[["initial_temp_c", "hypothermia_flag"]].head())
+
+    # Comorbidity risk, pre-exisitng conditions 
+    df["comorbidity_aki_risk_score"] = df["comorbidity"].map(_comorbidity_score)
+    print("\nComorbidity AKI Risk Score feature:")
+    print(df[["comorbidity", "comorbidity_aki_risk_score"]].head())
 
     # Engineered Features 
     engineered_cols = [
