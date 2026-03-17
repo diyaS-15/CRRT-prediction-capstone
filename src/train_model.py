@@ -4,7 +4,7 @@ from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix)
 
-from src.clean_missing import clean_missing_values
+from clean_missing import clean_missing_values
 clean_missing_values("synthetic_data.csv", "cleaned_data.csv")
 
 df = pd.read_csv(os.path.join("data", "cleaned_data.csv"))
@@ -30,6 +30,7 @@ else:
 # Probability of class 1 (risk)
 risk_scores = model.predict_proba(X_scaled)[:, 1]
 
+# --- top 10 highest-risk predictions ---
 top_risk = pd.DataFrame({
     "record_id": record_ids,
     "risk_score": risk_scores,
@@ -43,10 +44,24 @@ os.makedirs("results", exist_ok=True)
 top_risk.to_csv("results/top10_high_risk_predictions.csv", index=False)
 print("\nSaved: results/top10_high_risk_predictions.csv")
 
+# --- Bottom 10 lowest-risk predictions ---
+bottom_risk = pd.DataFrame({
+    "record_id": record_ids,
+    "risk_score": risk_scores,
+    "label": y.values
+}).sort_values("risk_score", ascending=True).head(10)
+
+print("\nBottom 10 lowest-risk predictions:")
+print(bottom_risk.to_string(index=False))
+
+os.makedirs("results", exist_ok=True)
+bottom_risk.to_csv("results/bottom10_low_risk_predictions.csv", index=False)
+print("\nSaved: results/bottom10_low_risk_predictions.csv")
+
 print("trained")
 
-y_pred = model.predict(X)
-y_proba = model.predict_proba(X)[:, 1]
+y_pred = model.predict(X_scaled)
+y_proba = model.predict_proba(X_scaled)[:, 1]
 
 print(accuracy_score(y, y_pred), precision_score(y, y_pred), recall_score(y, y_pred),f1_score(y, y_pred), roc_auc_score(y, y_proba))
 
