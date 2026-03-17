@@ -3,6 +3,7 @@ import os
 from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix)
+from sklearn.metrics import average_precision_score, balanced_accuracy_score
 
 from .clean_missing import clean_missing_values
 clean_missing_values("synthetic_data.csv", "cleaned_data.csv")
@@ -77,6 +78,8 @@ os.makedirs("results", exist_ok=True)
 high_risk_df.to_csv("results/high_risk_flagged_patients.csv", index=False)
 print("Saved: results/high_risk_flagged_patients.csv")
 
+
+
 print("trained")
 
 y_pred = model.predict(X_scaled)
@@ -85,6 +88,20 @@ y_proba = model.predict_proba(X_scaled)[:, 1]
 # --- ROC-AUC (fair comparison using probabilities) ---
 roc = roc_auc_score(y, y_proba)
 print(f"ROC-AUC: {roc:.4f}")
+
+# ---  PR-AUC / Average Precision ---
+pr_auc = average_precision_score(y, y_proba)
+print(f"PR-AUC (Average Precision): {pr_auc:.4f}")
+
+# ---  Balanced Accuracy ---
+bal_acc = balanced_accuracy_score(y, y_pred)
+print(f"Balanced Accuracy: {bal_acc:.4f}")
+
+# Save to metrics file (append)
+os.makedirs("results", exist_ok=True)
+with open("results/metrics.txt", "a") as f:
+    f.write(f"PR-AUC (Average Precision): {pr_auc:.4f}\n")
+    f.write(f"Balanced Accuracy: {bal_acc:.4f}\n")
 
 # optional: save metric to results folder
 os.makedirs("results", exist_ok=True)

@@ -24,4 +24,5 @@ venv/
 .vscode/
 __pycache__/
 *.pyc
-.ipynb_checkpoints/
+.ipynb_checkpoints/results/
+results/
