@@ -4,7 +4,7 @@ from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (accuracy_score, precision_score, recall_score, f1_score, roc_auc_score, confusion_matrix)
 
-from clean_missing import clean_missing_values
+from .clean_missing import clean_missing_values
 clean_missing_values("synthetic_data.csv", "cleaned_data.csv")
 
 df = pd.read_csv(os.path.join("data", "cleaned_data.csv"))
@@ -57,6 +57,25 @@ print(bottom_risk.to_string(index=False))
 os.makedirs("results", exist_ok=True)
 bottom_risk.to_csv("results/bottom10_low_risk_predictions.csv", index=False)
 print("\nSaved: results/bottom10_low_risk_predictions.csv")
+
+# --- High-risk flag using a threshold ---
+RISK_THRESHOLD = 0.80  # change this to 0.70 / 0.90 if you want
+
+high_risk_flag = (risk_scores >= RISK_THRESHOLD).astype(int)
+
+high_risk_df = pd.DataFrame({
+    "record_id": record_ids,
+    "risk_score": risk_scores,
+    "high_risk_flag": high_risk_flag,
+    "label": y.values
+}).sort_values("risk_score", ascending=False)
+
+print(f"\nHigh-risk threshold = {RISK_THRESHOLD}")
+print("High-risk count:", int(high_risk_df["high_risk_flag"].sum()))
+
+os.makedirs("results", exist_ok=True)
+high_risk_df.to_csv("results/high_risk_flagged_patients.csv", index=False)
+print("Saved: results/high_risk_flagged_patients.csv")
 
 print("trained")
 
