@@ -10,7 +10,7 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score
+from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score, confusion_matrix
 
 from xgboost import XGBClassifier
 from src.split import make_patient_level_split
@@ -127,11 +127,33 @@ def main():
     clf = Pipeline([("prep", preprocessor), ("model", model)])
     clf.fit(train_df, y_train)
 
+    # Get feature names after preprocessing
+    feature_names = clf.named_steps["prep"].get_feature_names_out()
+
+    # Get feature importance scores from XGBoost
+    importances = clf.named_steps["model"].feature_importances_
+
+    # Create a table of features and their importance scores
+    feature_importance_df = pd.DataFrame({
+        "feature": feature_names,
+        "importance": importances
+    }).sort_values("importance", ascending=False)
+
     # Get prediction probabilities and final predicted labels
     val_proba = clf.predict_proba(val_df)[:, 1]
     test_proba = clf.predict_proba(test_df)[:, 1]
     val_pred = (val_proba >= 0.5).astype(int)
     test_pred = (test_proba >= 0.5).astype(int)
+
+    # Confusion matrix values for validation and test sets
+    val_tn, val_fp, val_fn, val_tp = confusion_matrix(y_val, val_pred).ravel()
+    test_tn, test_fp, test_fn, test_tp = confusion_matrix(y_test, test_pred).ravel()
+
+    print("VAL confusion matrix:")
+    print("TP:", val_tp, "FP:", val_fp, "TN:", val_tn, "FN:", val_fn)
+
+    print("TEST confusion matrix:")
+    print("TP:", test_tp, "FP:", test_fp, "TN:", test_tn, "FN:", test_fn)
 
     val_results = pd.DataFrame({
         group_col: val_df[group_col].values,
@@ -147,12 +169,33 @@ def main():
         "pred_label": test_pred
     })
 
+    # Export false positives and false negatives for VALIDATION set
+    val_false_positives = val_results[
+        (val_results["actual"] == 0) & (val_results["pred_label"] == 1)
+    ]
+
+    val_false_negatives = val_results[
+        (val_results["actual"] == 1) & (val_results["pred_label"] == 0)
+    ]
+
+    # Export false positives and false negatives for TEST set
+    test_false_positives = test_results[
+        (test_results["actual"] == 0) & (test_results["pred_label"] == 1)
+    ]
+
+    test_false_negatives = test_results[
+        (test_results["actual"] == 1) & (test_results["pred_label"] == 0)
+    ]
+
+    # Safely calculate ROC-AUC only if both classes are present
     def safe_auc(y, p):
         return float(roc_auc_score(y, p)) if len(np.unique(y)) > 1 else None
 
+    # Safely calculate PR-AUC only if both classes are present
     def safe_prauc(y, p):
         return float(average_precision_score(y, p)) if len(np.unique(y)) > 1 else None
 
+    # Store model evaluation results
     metrics = {
         "label_col": label_col,
         "group_col": group_col,
@@ -166,28 +209,81 @@ def main():
         "test_roc_auc": safe_auc(y_test, test_proba),
         "val_pr_auc": safe_prauc(y_val, val_proba),
         "test_pr_auc": safe_prauc(y_test, test_proba),
+        "val_tp": int(val_tp),
+        "val_fp": int(val_fp),
+        "val_tn": int(val_tn),
+        "val_fn": int(val_fn),
+        "test_tp": int(test_tp),
+        "test_fp": int(test_fp),
+        "test_tn": int(test_tn),
+        "test_fn": int(test_fn),
     }
 
+    # Print summary of model results
     print("Label:", label_col, "| Group:", group_col)
     print("Train/Val/Test rows:", metrics["train_rows"], metrics["val_rows"], metrics["test_rows"])
     print("VAL  acc/ROC-AUC/PR-AUC:", metrics["val_accuracy"], metrics["val_roc_auc"], metrics["val_pr_auc"])
     print("TEST acc/ROC-AUC/PR-AUC:", metrics["test_accuracy"], metrics["test_roc_auc"], metrics["test_pr_auc"])
 
+    # Create reports folder if it does not exist
     os.makedirs("reports", exist_ok=True)
+    # Save evaluation metrics
     with open("reports/xgb_metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
     print("Saved: reports/xgb_metrics.json")
+    # Save trained model pipeline
     joblib.dump(clf, "reports/xgb_pipeline.joblib")
     print("Saved: reports/xgb_pipeline.joblib")
 
+    # Save patient-level predictions
     val_results.to_csv("reports/val_predictions.csv", index=False)
     test_results.to_csv("reports/test_predictions.csv", index=False)
     print("Saved: reports/val_predictions.csv")
     print("Saved: reports/test_predictions.csv")
 
+    # Save split leakage check results
     with open("reports/split_check.json", "w") as f:
         json.dump(leakage_report, f, indent=2)
     print("Saved: reports/split_check.json")
+
+    # Save confusion matrix results
+    confusion_report = {
+        "validation": {
+            "tp": int(val_tp),
+            "fp": int(val_fp),
+            "tn": int(val_tn),
+            "fn": int(val_fn),
+        },
+        "test": {
+            "tp": int(test_tp),
+            "fp": int(test_fp),
+            "tn": int(test_tn),
+            "fn": int(test_fn),
+        }
+    }
+
+    with open("reports/confusion_matrix.json", "w") as f:
+        json.dump(confusion_report, f, indent=2)
+    print("Saved: reports/confusion_matrix.json")
+
+    # Save false positive and false negative cases
+    val_false_positives.to_csv("reports/val_false_positives.csv", index=False)
+    val_false_negatives.to_csv("reports/val_false_negatives.csv", index=False)
+    test_false_positives.to_csv("reports/test_false_positives.csv", index=False)
+    test_false_negatives.to_csv("reports/test_false_negatives.csv", index=False)
+    
+    print("Saved: reports/val_false_positives.csv")
+    print("Saved: reports/val_false_negatives.csv")
+    print("Saved: reports/test_false_positives.csv")
+    print("Saved: reports/test_false_negatives.csv")
+
+    # Save feature importance results
+    feature_importance_df.to_csv("reports/xgb_feature_importance.csv", index=False)
+    print("Saved: reports/xgb_feature_importance.csv")
+
+    # Print top 10 most important features
+    print("Top 10 features:")
+    print(feature_importance_df.head(10))
 
 if __name__ == "__main__":
     main()
