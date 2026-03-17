@@ -4,6 +4,9 @@ data/**
 **/data/
 **/data/**
 
+venv/
+.venv
+
 # common sensitive data file types anywhere
 *.csv
 *.xlsx
