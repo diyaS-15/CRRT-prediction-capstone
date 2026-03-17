@@ -82,5 +82,14 @@ print("trained")
 y_pred = model.predict(X_scaled)
 y_proba = model.predict_proba(X_scaled)[:, 1]
 
+# --- ROC-AUC (fair comparison using probabilities) ---
+roc = roc_auc_score(y, y_proba)
+print(f"ROC-AUC: {roc:.4f}")
+
+# optional: save metric to results folder
+os.makedirs("results", exist_ok=True)
+with open("results/metrics.txt", "a") as f:
+    f.write(f"ROC-AUC: {roc:.4f}\n")
+
 print(accuracy_score(y, y_pred), precision_score(y, y_pred), recall_score(y, y_pred),f1_score(y, y_pred), roc_auc_score(y, y_proba))
 
