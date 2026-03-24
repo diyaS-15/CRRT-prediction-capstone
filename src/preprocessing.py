@@ -10,12 +10,14 @@ __all__ = [
     "engineer_features",
     "FEATURE_COLS",
     "TARGET_COL",
+    "REQUIRED_COLS", 
+    "RANDOM_SEED"
 ]
-
 
 # CONSTANTS 
 TARGET_COL = "crrt_within_48h"
 # import in train_model so files are same with what cols go into 
+RANDOM__SEED = 42 # so that all files have same random seed 
 FEATURE_COLS = [
     "age",
     "tbsa_2nd_3rd",
@@ -28,8 +30,26 @@ FEATURE_COLS = [
     "burn_severity_tier",
     "urine_output_per_kg",
     "carboxyhemoglobin_risk_flag",
-    "hypothermia_flag"
+    "hypothermia_flag",
+    "comorbidity_aki_risk_score",
+    "low_urine_output_flag",
 ]
+# cols that have to exsist for pipeline to run
+REQUIRED_COLS = [
+    "age", "tbsa_2nd_3rd", "inhalation_injury",
+    "injury_datetime", "admission_datetime",
+    "crrt_first_24h", "crrt_25_48h",
+    "total_crystalloid_ml_first_24h", "total_colloid_ml_first_24h", "total_urine_output_ml_first_24h",
+    "admission_weight_kg",             
+    "carboxyhemoglobin", "initial_temp_c", "comorbidity",
+]
+# typical impute medians for continous variables 
+IMPUTE_MEDIANS = {
+    "carboxyhemoglobin": 5.0,           
+    "initial_temp_c":    37.0,          
+    "admission_weight_kg": 75.0,        
+    "tbsa_2nd_3rd":      20.0,          
+}
 
 # HELPER FUNCTIONS 
 def load_burn_data(file_name="synthetic_data.csv"):
@@ -62,7 +82,7 @@ def assign_severity_tier(score):
     else:
         return 3  
 # vaue to each pre-exisiting conditions associated w/ AKI risk 
-def _comorbidity_score(val):
+def comorbidity_score(val):
     if pd.isna(val):
             return 0
     s = str(val).strip().lower()
@@ -75,9 +95,37 @@ def _comorbidity_score(val):
         score += 1
     return score
 
+# removes clinically impossible values 
+def clip_outliers(df: pd.DataFrame) -> pd.DataFrame:
+    clips = {
+        "age":              (0, 120),
+        "tbsa_2nd_3rd":     (0, 100),   
+        "carboxyhemoglobin":(0, 100),   
+        "initial_temp_c":   (25, 45),    
+        "admission_weight_kg": (1, 300),  
+    }
+    for col, (lo, hi) in clips.items():
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").clip(lo, hi)
+    return df
+
+
 # function so other files can call without rerunning 
 def engineer_features(dfog=pd.DataFrame) -> pd.DataFrame: 
     df = dfog.copy() # copy df so not work on original 
+
+    # fail if required cols not present 
+    missing_cols = [c for c in REQUIRED_COLS if c not in df.columns]
+    if missing_cols:
+        raise ValueError(f"CSV is missing required columns: {missing_cols}")
+    
+    # remove outliers 
+    df = clip_outliers(df)
+
+    # imputes medians 
+    for col, median_val in IMPUTE_MEDIANS.items():
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").fillna(median_val)
     
     # FEATURES 
 
@@ -143,7 +191,7 @@ def engineer_features(dfog=pd.DataFrame) -> pd.DataFrame:
     print(df[["initial_temp_c", "hypothermia_flag"]].head())
 
     # Comorbidity risk, pre-exisitng conditions 
-    df["comorbidity_aki_risk_score"] = df["comorbidity"].map(_comorbidity_score)
+    df["comorbidity_aki_risk_score"] = df["comorbidity"].map(comorbidity_score)
     print("\nComorbidity AKI Risk Score feature:")
     print(df[["comorbidity", "comorbidity_aki_risk_score"]].head())
 
@@ -159,9 +207,10 @@ def engineer_features(dfog=pd.DataFrame) -> pd.DataFrame:
         "fluid_overload_flag",       
         "burn_severity_tier",  
         "urine_output_per_kg",
+        "low_urine_output_flag",
         "carboxyhemoglobin_risk_flag",
-        "hypothermia_flag"
-
+        "hypothermia_flag",
+        "comorbidity_aki_risk_score",
     ]
     # Printing 
     print("Engineered features: ")
