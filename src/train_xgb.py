@@ -10,29 +10,21 @@ from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score, confusion_matrix
+from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score, confusion_matrix, recall_score, precision_score, f1_score
 
 from xgboost import XGBClassifier
-from src.split import make_patient_level_split
+from split import make_patient_level_split, get_Xy 
+from preprocessing import load_and_preprocess, FEATURE_COLS, TARGET_COL, RANDOM__SEED 
 
-# Choose which label column to predict
-def pick_label(df: pd.DataFrame) -> str:
-    # Read label name from environment variable
-    label = os.getenv("LABEL_COL", "crrt_first_24h").strip()
-    if label.lower() == "crrt":
-        if "crrt_first_24h" in df.columns:
-            return "crrt_first_24h"
-        if "crrt_25_48h" in df.columns:
-            return "crrt_25_48h"
-    return label
+# decision threshold (lower=more sensitive to catch more cases but potential more false positives)
+# [REEVALUATE AFTER ROC CURVE]
+DECISION_THRESHOLD = 0.4
 
 # Build preprocessing steps for numeric and categorical features
-def build_preprocessor(df: pd.DataFrame, label_col: str, group_col: str):
-    drop_cols = {label_col, group_col}
-
-    X = df.drop(columns=[c for c in drop_cols if c in df.columns], errors="ignore")
-    numeric_cols = X.select_dtypes(include=["number", "bool"]).columns.tolist()
-    categorical_cols = [c for c in X.columns if c not in numeric_cols]
+def build_preprocessor(df: pd.DataFrame):
+    available = [c for c in FEATURE_COLS if c in df.columns]
+    numeric_cols = df[available].select_dtypes(include=["number", "bool"]).columns.tolist()
+    categorical_cols = [c for c in available if c not in numeric_cols]
 
     num_pipe = Pipeline([("imputer", SimpleImputer(strategy="median"))])
     cat_pipe = Pipeline([
@@ -74,11 +66,11 @@ def verify_no_patient_leakage(train_df, val_df, test_df, group_col):
 
 def main():
    # Load dataset from local file path
-    data_path = os.getenv("BCQP_DATA_PATH", "data/synthetic.csv")
-    df = pd.read_csv(data_path)
+    data_path = os.getenv("BCQP_DATA_PATH", "data/synthetic_data.csv")
+    df = load_and_preprocess(data_path)
 
     # Make sure the label and group columns exist
-    label_col = pick_label(df)
+    label_col = TARGET_COL
     if label_col not in df.columns:
         raise ValueError(f"Label column '{label_col}' not found in dataframe.")
 
@@ -87,7 +79,7 @@ def main():
         raise ValueError(f"Group column '{group_col}' not found in dataframe.")
 
     # Split data by patient/group to avoid leakage
-    splits = make_patient_level_split(df, group_col=group_col, val_size=0.10, test_size=0.20, seed=42)
+    splits = make_patient_level_split(df, group_col=group_col, val_size=0.10, test_size=0.20, seed=RANDOM__SEED)
 
     train_df = df.iloc[splits.train_idx]
     val_df   = df.iloc[splits.val_idx]
@@ -96,21 +88,17 @@ def main():
     # Verify there is no overlap of patients across splits
     leakage_report = verify_no_patient_leakage(train_df, val_df, test_df, group_col)
     print("Leakage check:", leakage_report)
+    # error to stop training if there's a data leak 
+    if leakage_report["leakage_found"]:
+        raise RuntimeError("patient data leaked") 
+    
+    X_train, X_val, X_test, y_train, y_val, y_test = get_Xy(df, splits)
+    # scaling positive bc minority class so it's not ignored 
+    scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
+    print(f"scale_pos_weight: {scale_pos_weight:.2f}  (train positives: {(y_train==1).sum()}, negatives: {(y_train==0).sum()})")
 
     # Create preprocessing pipeline using training data columns
-    preprocessor = build_preprocessor(train_df, label_col=label_col, group_col=group_col)
-
-    # Convert labels to 0/1 format
-    label_map = {
-    "No": 0, "Yes": 1,
-    "no": 0, "yes": 1,
-    False: 0, True: 1,
-    0: 0, 1: 1
-    }
-
-    y_train = train_df[label_col].map(label_map).astype(int)
-    y_val   = val_df[label_col].map(label_map).astype(int)
-    y_test  = test_df[label_col].map(label_map).astype(int)
+    preprocessor = build_preprocessor(df)
 
     # Set up XGBoost model
     model = XGBClassifier(
@@ -119,13 +107,14 @@ def main():
         learning_rate=0.05,
         subsample=0.8,
         colsample_bytree=0.8,
+        scale_pos_weight=scale_pos_weight,
         eval_metric="logloss",
-        random_state=42,
+        random_state=RANDOM__SEED,
         n_jobs=-1,
     )
 
     clf = Pipeline([("prep", preprocessor), ("model", model)])
-    clf.fit(train_df, y_train)
+    clf.fit(X_train, y_train)
 
     # Get feature names after preprocessing
     feature_names = clf.named_steps["prep"].get_feature_names_out()
@@ -139,11 +128,12 @@ def main():
         "importance": importances
     }).sort_values("importance", ascending=False)
 
-    # Get prediction probabilities and final predicted labels
-    val_proba = clf.predict_proba(val_df)[:, 1]
-    test_proba = clf.predict_proba(test_df)[:, 1]
-    val_pred = (val_proba >= 0.5).astype(int)
-    test_pred = (test_proba >= 0.5).astype(int)
+    # predict on X validation + test 
+    val_proba  = clf.predict_proba(X_val)[:, 1]
+    test_proba = clf.predict_proba(X_test)[:, 1]
+    # prediction threshold adjuatable w/ deicsion threshold now 
+    val_pred  = (val_proba  >= DECISION_THRESHOLD).astype(int)
+    test_pred = (test_proba >= DECISION_THRESHOLD).astype(int)
 
     # Confusion matrix values for validation and test sets
     val_tn, val_fp, val_fn, val_tp = confusion_matrix(y_val, val_pred).ravel()
@@ -199,12 +189,20 @@ def main():
     metrics = {
         "label_col": label_col,
         "group_col": group_col,
+        "decision_threshold": DECISION_THRESHOLD,
+        "scale_pos_weight": float(scale_pos_weight),
         "rows": int(len(df)),
         "train_rows": int(len(train_df)),
         "val_rows": int(len(val_df)),
         "test_rows": int(len(test_df)),
         "val_accuracy": float(accuracy_score(y_val, val_pred)),
         "test_accuracy": float(accuracy_score(y_test, test_pred)),
+        "val_sensitivity": float(recall_score(y_val,  val_pred,  zero_division=0)),
+        "test_sensitivity":float(recall_score(y_test, test_pred, zero_division=0)),
+        "val_precision": float(precision_score(y_val,  val_pred,  zero_division=0)),
+        "test_precision": float(precision_score(y_test, test_pred, zero_division=0)),
+        "val_f1": float(f1_score(y_val,  val_pred,  zero_division=0)),
+        "test_f1": float(f1_score(y_test, test_pred, zero_division=0)),
         "val_roc_auc": safe_auc(y_val, val_proba),
         "test_roc_auc": safe_auc(y_test, test_proba),
         "val_pr_auc": safe_prauc(y_val, val_proba),
