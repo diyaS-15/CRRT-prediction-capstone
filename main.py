@@ -1,9 +1,10 @@
+import os
 import pandas as pd
 from src.split import make_patient_level_split
 
 def main():
     # IMPORTANT (NDA/HIPAA safety):
-    # Do NOT hardcode your real dataset filename/path in this file before pushing to GitHub.
+    # Do NOT hardcode our real dataset filename/path in this file before pushing to GitHub.
     # Keep the placeholder default, and set the real path locally using an environment variable:
     #   export BCQP_DATA_PATH="data/your_real_file.csv"   (Mac/Linux)
     # Then run:

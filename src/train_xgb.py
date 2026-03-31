@@ -13,12 +13,26 @@ from sklearn.impute import SimpleImputer
 from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score, confusion_matrix, recall_score, precision_score, f1_score
 
 from xgboost import XGBClassifier
-from split import make_patient_level_split, get_Xy 
-from preprocessing import load_and_preprocess, FEATURE_COLS, TARGET_COL, RANDOM__SEED 
+from .split import make_patient_level_split
+from .preprocessing import load_and_preprocess, FEATURE_COLS, TARGET_COL, RANDOM__SEED
 
 # decision threshold (lower=more sensitive to catch more cases but potential more false positives)
 # [REEVALUATE AFTER ROC CURVE]
-DECISION_THRESHOLD = 0.4
+DECISION_THRESHOLD = 0.75
+
+# Choose which label column to predict
+def pick_label(df: pd.DataFrame) -> str:
+    # Read label name from environment variable
+    label = os.getenv("LABEL_COL", "crrt_25_48h").strip()
+    
+    if label in df.columns:
+        return label
+
+    if "crrt_25_48h" in df.columns:
+        return "crrt_25_48h"
+
+    raise ValueError("No valid CRRT label column found in dataframe.")
+    
 
 # Build preprocessing steps for numeric and categorical features
 def build_preprocessor(df: pd.DataFrame):
@@ -66,17 +80,32 @@ def verify_no_patient_leakage(train_df, val_df, test_df, group_col):
 
 def main():
    # Load dataset from local file path
-    data_path = os.getenv("BCQP_DATA_PATH", "data/synthetic_data.csv")
+    data_path = "/Users/anagantikrutika/Desktop/CSE485/synthetic_data.csv"
+    print("Using data path =", data_path)
     df = load_and_preprocess(data_path)
 
     # Make sure the label and group columns exist
-    label_col = TARGET_COL
+    label_col = TARGET_COL if TARGET_COL in df.columns else pick_label(df)
     if label_col not in df.columns:
         raise ValueError(f"Label column '{label_col}' not found in dataframe.")
 
     group_col = "patient_id" if "patient_id" in df.columns else "record_id"
     if group_col not in df.columns:
         raise ValueError(f"Group column '{group_col}' not found in dataframe.")
+
+    # Drop rows with missing label before splitting
+    df = df[df[label_col].notna()].copy()
+
+    # Final approved 24-hour predictors only
+    approved_features = [c for c in FEATURE_COLS if c in df.columns and c != label_col]
+    missing_features = [c for c in FEATURE_COLS if c not in df.columns]
+
+    if len(approved_features) == 0:
+        raise ValueError("No approved 24-hour predictors found in dataframe.")
+
+    print("Approved 24-hour predictors:", approved_features)
+    if missing_features:
+        print("Missing approved predictors:", missing_features)
 
     # Split data by patient/group to avoid leakage
     splits = make_patient_level_split(df, group_col=group_col, val_size=0.10, test_size=0.20, seed=RANDOM__SEED)
@@ -92,13 +121,32 @@ def main():
     if leakage_report["leakage_found"]:
         raise RuntimeError("patient data leaked") 
     
-    X_train, X_val, X_test, y_train, y_val, y_test = get_Xy(df, splits)
+    # Use only approved 24-hour predictors
+    X_train = train_df[approved_features].copy()
+    X_val   = val_df[approved_features].copy()
+    X_test  = test_df[approved_features].copy()
+
+    # Convert labels to 0/1 format
+    # 0 = no and 1 = yes
+    label_map = {
+    "No": 0, "Yes": 1,
+    "no": 0, "yes": 1,
+    False: 0, True: 1,
+    0: 0, 1: 1
+    }
+
+    y_train = train_df[label_col].map(label_map).astype(int)
+    y_val   = val_df[label_col].map(label_map).astype(int)
+    y_test  = test_df[label_col].map(label_map).astype(int)
+
     # scaling positive bc minority class so it's not ignored 
-    scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
-    print(f"scale_pos_weight: {scale_pos_weight:.2f}  (train positives: {(y_train==1).sum()}, negatives: {(y_train==0).sum()})")
+    pos_count = (y_train == 1).sum()
+    neg_count = (y_train == 0).sum()
+    scale_pos_weight = neg_count / pos_count if pos_count > 0 else 1.0
+    print(f"scale_pos_weight: {scale_pos_weight:.2f}  (train positives: {pos_count}, negatives: {neg_count})")
 
     # Create preprocessing pipeline using training data columns
-    preprocessor = build_preprocessor(df)
+    preprocessor = build_preprocessor(X_train)
 
     # Set up XGBoost model
     model = XGBClassifier(
@@ -136,8 +184,8 @@ def main():
     test_pred = (test_proba >= DECISION_THRESHOLD).astype(int)
 
     # Confusion matrix values for validation and test sets
-    val_tn, val_fp, val_fn, val_tp = confusion_matrix(y_val, val_pred).ravel()
-    test_tn, test_fp, test_fn, test_tp = confusion_matrix(y_test, test_pred).ravel()
+    val_tn, val_fp, val_fn, val_tp = confusion_matrix(y_val, val_pred, labels=[0, 1]).ravel()
+    test_tn, test_fp, test_fn, test_tp = confusion_matrix(y_test, test_pred, labels=[0, 1]).ravel()
 
     print("VAL confusion matrix:")
     print("TP:", val_tp, "FP:", val_fp, "TN:", val_tn, "FN:", val_fn)
@@ -191,6 +239,8 @@ def main():
         "group_col": group_col,
         "decision_threshold": DECISION_THRESHOLD,
         "scale_pos_weight": float(scale_pos_weight),
+        "approved_24h_predictors": approved_features,
+        "missing_approved_predictors": missing_features,
         "rows": int(len(df)),
         "train_rows": int(len(train_df)),
         "val_rows": int(len(val_df)),
@@ -229,6 +279,15 @@ def main():
     with open("reports/xgb_metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
     print("Saved: reports/xgb_metrics.json")
+
+    # Save approved 24-hour predictors
+    with open("reports/approved_24h_predictors.json", "w") as f:
+        json.dump({
+            "approved_24h_predictors": approved_features,
+            "missing_approved_predictors": missing_features
+        }, f, indent=2)
+    print("Saved: reports/approved_24h_predictors.json")
+
     # Save trained model pipeline
     joblib.dump(clf, "reports/xgb_pipeline.joblib")
     print("Saved: reports/xgb_pipeline.joblib")

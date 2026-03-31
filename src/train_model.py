@@ -19,7 +19,7 @@ X_scaled = scaler.fit_transform(X)
 model = HistGradientBoostingClassifier()
 model.fit(X_scaled, y)
 
-# --- Top 10 highest-risk predictions (simple: on same data used for training) ---
+# Top 10 highest-risk predictions (simple: on same data used for training) ---
 import numpy as np
 
 # Make sure record_id exists
