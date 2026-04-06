@@ -171,12 +171,12 @@ def engineer_features(dfog=pd.DataFrame) -> pd.DataFrame:
 
     # Urine output per kilogram of bodyweight, AKI standard <0.5 mL/kg/hr for 6+ hours signals kidney failure 
     # normalize weight 
-    df["weight_kg"] = pd.to_numeric(df.get("weight_kg"), errors="coerce")
-    df["urine_output_per_kg"] = (df["total_urine_output_ml_first_24h"] / df["weight_kg"].replace(0, np.nan))
+    df["admission_weight_kg"] = pd.to_numeric(df.get("admission_weight_kg"), errors="coerce")
+    df["urine_output_per_kg"] = (df["total_urine_output_ml_first_24h"] / df["admission_weight_kg"].replace(0, np.nan))
     # flag when below aki standard 
     df["low_urine_output_flag"] = (df["urine_output_per_kg"] < 12).astype(int)  
     print("\nUrine Output per kg feature:")
-    print(df[["total_urine_output_ml_first_24h", "weight_kg", "urine_output_per_kg", "low_urine_output_flag"]].head())
+    print(df[["total_urine_output_ml_first_24h", "admission_weight_kg", "urine_output_per_kg", "low_urine_output_flag"]].head())
 
     # Carboxyhemoglobin risk flag, clinical threshold >=25% for CO poisioning 
     df["carboxyhemoglobin"] = pd.to_numeric(df["carboxyhemoglobin"], errors="coerce")
