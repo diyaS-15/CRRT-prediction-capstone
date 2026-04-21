@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import GroupShuffleSplit
 
-from .preprocessing import FEATURE_COLS, TARGET_COL, RANDOM__SEED
+from preprocessing import FEATURE_COLS, TARGET_COL, RANDOM__SEED
 
 @dataclass(frozen=True)
 class SplitResult:
