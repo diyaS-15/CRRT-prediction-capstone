@@ -35,34 +35,33 @@ def build_features(
 ):
     tbsa_2nd_3rd = tbsa_2nd + tbsa_3rd
 
-    if tbsa_2nd_3rd < 10:
+    inhalation_flag = 1 if inhalation_injury else 0
+    revised_baux_score = age + tbsa_2nd_3rd + (17 * inhalation_flag)
+    if revised_baux_score < 60:
         burn_severity_tier = 0
-    elif tbsa_2nd_3rd < 20:
+    elif revised_baux_score < 100:
         burn_severity_tier = 1
-    elif tbsa_2nd_3rd < 40:
+    elif revised_baux_score < 140:
         burn_severity_tier = 2
     else:
         burn_severity_tier = 3
 
-    inhalation_flag = 1 if inhalation_injury else 0
-    late_admission_flag = 1 if hours_injury_to_admission > 8 else 0
+    late_admission_flag = 1 if hours_injury_to_admission > 6 else 0
 
     fluid_balance_24h = fluid_intake_24h - fluid_output_24h
-    fluid_overload_flag = 1 if fluid_balance_24h > 4000 else 0
+    fluid_overload_flag = 1 if fluid_balance_24h > 0 else 0
 
     urine_output_per_kg = urine_output_24h / weight_kg if weight_kg > 0 else 0
-    low_urine_output_flag = 1 if urine_output_per_kg < 0.5 else 0
+    low_urine_output_flag = 1 if urine_output_per_kg < 12 else 0
 
     hypothermia_flag = 1 if temperature_c < 36.0 else 0
-    carboxyhemoglobin_risk_flag = 1 if carboxyhemoglobin > 10 else 0
+    carboxyhemoglobin_risk_flag = 1 if carboxyhemoglobin >= 25 else 0
 
     comorbidity_aki_risk_score = (
         int(diabetes) +
         int(hypertension) +
         (2 * int(chronic_kidney_disease))
     )
-
-    revised_baux_score = age + tbsa_2nd_3rd + (17 if inhalation_flag == 1 else 0)
 
     return {
         "age": age,
