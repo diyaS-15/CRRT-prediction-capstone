@@ -4,6 +4,11 @@ import json
 import joblib
 import numpy as np
 import pandas as pd
+import shap
+import matplotlib
+matplotlib.use("Agg")  
+import matplotlib.pyplot as plt
+# agg = noninteractive background so saved without display
 
 from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
@@ -117,6 +122,38 @@ def main():
 
     # Get feature names after preprocessing
     feature_names = clf.named_steps["prep"].get_feature_names_out()
+
+    # Global Feature Importance via SHAP (SHapley Additive exPlanations)
+    # note: SHAP used to explain why ML model makes specific prediction, stems in game theory reduces black box
+
+    # transform both splits so SHAP receives the same numeric matrix the model sees initialy
+    X_test_transformed  = clf.named_steps["prep"].transform(X_test)
+    # background dataset for permutationexplainer
+    X_train_transformed = clf.named_steps["prep"].transform(X_train)
+
+    # uses permutationexplainer bc calls predict_proba directly and never reads model internals so changes in xgboost format don't matter too much
+    explainer = shap.PermutationExplainer(
+        clf.named_steps["model"].predict_proba,
+        X_train_transformed,
+    )
+    # return 2 cols (n_samples, n_features, 2),[:, :, 1] extract shap for CRRT= 1
+    shap_values = explainer(X_test_transformed).values[:, :, 1]
+    # shap summary plot to reports folder
+    shap.summary_plot(
+        shap_values,
+        X_test_transformed,
+        feature_names=feature_names,
+        show=False,
+    )
+    plt.tight_layout()
+    plt.savefig("reports/shap_summary.png", dpi=150, bbox_inches="tight")
+    plt.close("all")
+    print("Saved: reports/shap_summary.png")
+
+    # csv of raw shap values for frontend (row=patient, col=feature shap vals)
+    shap_df = pd.DataFrame(shap_values, columns=feature_names)
+    shap_df.to_csv("reports/shap_values_test.csv", index=False)
+    print("Saved: reports/shap_values_test.csv")
 
     # Get feature importance scores from XGBoost
     importances = clf.named_steps["model"].feature_importances_
