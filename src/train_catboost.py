@@ -96,6 +96,8 @@ def main():
     scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
 
     # Tell CatBoost to care more about the positive (CRRT=1) class
+    # Handle class imbalance: CRRT=1 is rare, so give it higher weight
+    class_weights = {0: 1.0, 1: float(scale_pos_weight)}
     model = CatBoostClassifier(
     iterations=100,
     learning_rate=0.1,
