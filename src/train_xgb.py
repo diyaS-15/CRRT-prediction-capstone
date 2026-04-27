@@ -17,8 +17,8 @@ from sklearn.impute import SimpleImputer
 from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score, confusion_matrix, recall_score, precision_score, f1_score
 
 from xgboost import XGBClassifier
-from split import make_patient_level_split, get_Xy 
-from preprocessing import load_and_preprocess, FEATURE_COLS, TARGET_COL, RANDOM_SEED 
+from .split import make_patient_level_split, get_Xy 
+from .preprocessing import load_and_preprocess, FEATURE_COLS, TARGET_COL, RANDOM_SEED 
 
 # decision threshold (lower=more sensitive to catch more cases but potential more false positives)
 # [REEVALUATE AFTER ROC CURVE]
@@ -102,7 +102,8 @@ def main():
     print(f"scale_pos_weight: {scale_pos_weight:.2f}  (train positives: {(y_train==1).sum()}, negatives: {(y_train==0).sum()})")
 
     # Create preprocessing pipeline using training data columns
-    preprocessor = build_preprocessor(df)
+    
+    preprocessor = build_preprocessor(X_train)
 
     # Set up XGBoost model
     model = XGBClassifier(

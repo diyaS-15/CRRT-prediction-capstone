@@ -12,8 +12,8 @@ from sklearn.impute import SimpleImputer
 from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score, confusion_matrix, recall_score, precision_score, f1_score
 
 from catboost import CatBoostClassifier
-from split import make_patient_level_split, get_Xy 
-from preprocessing import load_and_preprocess, FEATURE_COLS, TARGET_COL, RANDOM_SEED 
+from .split import make_patient_level_split, get_Xy 
+from .preprocessing import load_and_preprocess, FEATURE_COLS, TARGET_COL, RANDOM_SEED 
 
 # decision threshold (lower=more sensitive to catch more cases but potential more false positives)
 # [REEVALUATE AFTER ROC CURVE]
@@ -94,10 +94,21 @@ def main():
     X_train, X_val, X_test, y_train, y_val, y_test = get_Xy(df, splits)
     # scaling positive bc minority class so it's not ignored 
     scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
+
+    # Tell CatBoost to care more about the positive (CRRT=1) class
+    model = CatBoostClassifier(
+    iterations=100,
+    learning_rate=0.1,
+    depth=6,
+    verbose=0,
+    class_weights=[1.0, float(scale_pos_weight)]  # [weight for class 0, weight for class 1]
+    )
+
     print(f"scale_pos_weight: {scale_pos_weight:.2f}  (train positives: {(y_train==1).sum()}, negatives: {(y_train==0).sum()})")
 
     # Create preprocessing pipeline using training data columns
-    preprocessor = build_preprocessor(df)
+    
+    preprocessor = build_preprocessor(X_train)
 
     # Set up CatBoost model
     model = CatBoostClassifier(
