@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import GroupShuffleSplit
 
-from preprocessing import FEATURE_COLS, TARGET_COL, RANDOM__SEED
+from preprocessing import FEATURE_COLS, TARGET_COL, RANDOM_SEED
 
 @dataclass(frozen=True)
 class SplitResult:
@@ -19,7 +19,7 @@ def make_patient_level_split(
     group_col: str,
     val_size: float = 0.10,
     test_size: float = 0.20,
-    seed: int = RANDOM__SEED
+    seed: int = RANDOM_SEED
 ) -> SplitResult:
 
     if group_col not in df.columns:

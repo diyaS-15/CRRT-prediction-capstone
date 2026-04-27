@@ -22,7 +22,7 @@ from sklearn.model_selection import ParameterGrid, GroupKFold
 
 from xgboost import XGBClassifier
 from .split import make_patient_level_split
-from .preprocessing import load_and_preprocess, RANDOM__SEED
+from .preprocessing import load_and_preprocess, RANDOM_SEED
 
 MODEL_TARGET_COL = "crrt_25_48h"
 
@@ -181,7 +181,7 @@ def main():
         group_col=group_col,
         val_size=0.10,
         test_size=0.20,
-        seed=RANDOM__SEED,
+        seed=RANDOM_SEED,
     )
 
     train_df = df.iloc[splits.train_idx]
@@ -238,7 +238,7 @@ def main():
 
             model = XGBClassifier(
                 eval_metric="logloss",
-                random_state=RANDOM__SEED,
+                random_state=RANDOM_SEED,
                 n_jobs=-1,
                 scale_pos_weight=scale_pos_weight,
                 reg_lambda=1.0,
@@ -356,7 +356,7 @@ def main():
 
     best_model = XGBClassifier(
         eval_metric="logloss",
-        random_state=RANDOM__SEED,
+        random_state=RANDOM_SEED,
         n_jobs=-1,
         scale_pos_weight=scale_pos_weight,
         reg_lambda=1.0,

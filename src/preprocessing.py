@@ -17,7 +17,7 @@ __all__ = [
 # CONSTANTS 
 TARGET_COL = "crrt_within_48h"
 # import in train_model so files are same with what cols go into 
-RANDOM__SEED = 42 # so that all files have same random seed 
+RANDOM_SEED = 42 # so that all files have same random seed 
 FEATURE_COLS = [
     "age",
     "tbsa_2nd_3rd",
@@ -111,7 +111,7 @@ def clip_outliers(df: pd.DataFrame) -> pd.DataFrame:
 
 
 # function so other files can call without rerunning 
-def engineer_features(dfog=pd.DataFrame) -> pd.DataFrame: 
+def engineer_features(dfog: pd.DataFrame) -> pd.DataFrame: 
     df = dfog.copy() # copy df so not work on original 
 
     # fail if required cols not present 
