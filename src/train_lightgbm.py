@@ -1,4 +1,4 @@
-# Train and evaluate an XGBoost model for CRRT prediction
+# Train and evaluate a LightGBM model for CRRT prediction
 import os
 import json
 import joblib
@@ -6,7 +6,7 @@ import numpy as np
 import pandas as pd
 import shap
 import matplotlib
-matplotlib.use("Agg")  
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 # agg = noninteractive background so saved without display
 
@@ -17,9 +17,9 @@ from sklearn.impute import SimpleImputer
 from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score, confusion_matrix, recall_score, precision_score, f1_score
 from sklearn.model_selection import RandomizedSearchCV, GroupKFold
 
-from xgboost import XGBClassifier
-from .split import make_patient_level_split, get_Xy
-from .preprocessing import load_and_preprocess, FEATURE_COLS, TARGET_COL, RANDOM_SEED
+from lightgbm import LGBMClassifier
+from split import make_patient_level_split, get_Xy
+from preprocessing import load_and_preprocess, FEATURE_COLS, TARGET_COL, RANDOM__SEED
 
 # decision threshold (lower=more sensitive to catch more cases but potential more false positives)
 # [REEVALUATE AFTER ROC CURVE]
@@ -52,7 +52,7 @@ def verify_no_patient_leakage(train_df, val_df, test_df, group_col):
     train_ids = set(train_df[group_col])
     val_ids = set(val_df[group_col])
     test_ids = set(test_df[group_col])
-    
+
     leakage_report = {
         "group_col": group_col,
         "train_unique_ids": len(train_ids),
@@ -111,7 +111,7 @@ def main():
         raise ValueError(f"Group column '{group_col}' not found in dataframe.")
 
     # Split data by patient/group to avoid leakage
-    splits = make_patient_level_split(df, group_col=group_col, val_size=0.10, test_size=0.20, seed=RANDOM_SEED)
+    splits = make_patient_level_split(df, group_col=group_col, val_size=0.10, test_size=0.20, seed=RANDOM__SEED)
 
     train_df = df.iloc[splits.train_idx]
     val_df   = df.iloc[splits.val_idx]
@@ -120,34 +120,25 @@ def main():
     # Verify there is no overlap of patients across splits
     leakage_report = verify_no_patient_leakage(train_df, val_df, test_df, group_col)
     print("Leakage check:", leakage_report)
-    # error to stop training if there's a data leak 
+    # error to stop training if there's a data leak
     if leakage_report["leakage_found"]:
-        raise RuntimeError("patient data leaked") 
-    
+        raise RuntimeError("patient data leaked")
+
     X_train, X_val, X_test, y_train, y_val, y_test = get_Xy(df, splits)
-    # scaling positive bc minority class so it's not ignored 
+    # scaling positive bc minority class so it's not ignored
     scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
     print(f"scale_pos_weight: {scale_pos_weight:.2f}  (train positives: {(y_train==1).sum()}, negatives: {(y_train==0).sum()})")
 
     # Create preprocessing pipeline using training data columns
-    
-    preprocessor = build_preprocessor(X_train)
+    preprocessor = build_preprocessor(df)
 
-    # Set up XGBoost model
-    model = XGBClassifier(
+    # Set up LightGBM model
+    model = LGBMClassifier(
         n_estimators=300,
         max_depth=4,
         learning_rate=0.05,
-        min_child_weight=1,
-        subsample=0.8,
-        colsample_bytree=0.8,
-        gamma=0,
-        reg_alpha=0,
-        reg_lambda=1.0,
-        max_delta_step=2,
         scale_pos_weight=scale_pos_weight,
-        eval_metric="logloss",
-        random_state=RANDOM_SEED,
+        random_state=RANDOM__SEED,
         n_jobs=-1,
     )
 
@@ -155,15 +146,15 @@ def main():
     clf = Pipeline([("prep", preprocessor), ("model", model)])
     cv = GroupKFold(n_splits=5)
     param_distributions = {
-        "model__max_depth": [2, 3, 4, 5],
-        "model__learning_rate": [0.03, 0.05, 0.07, 0.1],
         "model__n_estimators": [100, 200, 300, 500],
-        "model__min_child_weight": [1, 2, 3],
+        "model__learning_rate": [0.03, 0.05, 0.07, 0.1],
+        "model__max_depth": [3, 4, 5, -1],
+        "model__num_leaves": [15, 31, 63],
+        "model__min_child_samples": [10, 20, 30],
         "model__subsample": [0.8, 0.9, 1.0],
         "model__colsample_bytree": [0.8, 0.9, 1.0],
-        "model__gamma": [0, 0.5, 1],
         "model__reg_alpha": [0, 0.5, 1],
-        "model__reg_lambda": [1, 2, 5],
+        "model__reg_lambda": [0, 1, 2, 5],
     }
     search = RandomizedSearchCV(
         estimator=clf,
@@ -171,7 +162,7 @@ def main():
         n_iter=TUNING_N_ITER,
         scoring="average_precision",
         cv=cv,
-        random_state=RANDOM_SEED,
+        random_state=RANDOM__SEED,
         n_jobs=-1,
         refit=True,
         verbose=1,
@@ -201,8 +192,9 @@ def main():
         ascending=[True, False, False, False, False, True, False],
     )
     best_threshold = float(threshold_df.iloc[0]["threshold"])
-    threshold_df.to_csv("reports/xgb_threshold_tuning.csv", index=False)
-    print("Saved: reports/xgb_threshold_tuning.csv")
+    os.makedirs("reports", exist_ok=True)
+    threshold_df.to_csv("reports/lightgbm_threshold_tuning.csv", index=False)
+    print("Saved: reports/lightgbm_threshold_tuning.csv")
 
     # Get feature names after preprocessing
     feature_names = clf.named_steps["prep"].get_feature_names_out()
@@ -215,7 +207,7 @@ def main():
     # background dataset for permutationexplainer
     X_train_transformed = clf.named_steps["prep"].transform(X_train)
 
-    # uses permutationexplainer bc calls predict_proba directly and never reads model internals so changes in xgboost format don't matter too much
+    # uses permutationexplainer bc calls predict_proba directly and never reads model internals so changes in model format don't matter too much
     explainer = shap.PermutationExplainer(
         clf.named_steps["model"].predict_proba,
         X_train_transformed,
@@ -230,16 +222,16 @@ def main():
         show=False,
     )
     plt.tight_layout()
-    plt.savefig("reports/shap_summary.png", dpi=150, bbox_inches="tight")
+    plt.savefig("reports/lightgbm_shap_summary.png", dpi=150, bbox_inches="tight")
     plt.close("all")
-    print("Saved: reports/shap_summary.png")
+    print("Saved: reports/lightgbm_shap_summary.png")
 
     # csv of raw shap values for frontend (row=patient, col=feature shap vals)
     shap_df = pd.DataFrame(shap_values, columns=feature_names)
-    shap_df.to_csv("reports/shap_values_test.csv", index=False)
-    print("Saved: reports/shap_values_test.csv")
+    shap_df.to_csv("reports/lightgbm_shap_values_test.csv", index=False)
+    print("Saved: reports/lightgbm_shap_values_test.csv")
 
-    # Get feature importance scores from XGBoost
+    # Get feature importance scores from LightGBM
     importances = clf.named_steps["model"].feature_importances_
 
     # Create a table of features and their importance scores
@@ -248,8 +240,7 @@ def main():
         "importance": importances
     }).sort_values("importance", ascending=False)
 
-    # predict on X validation + test 
-    val_proba  = clf.predict_proba(X_val)[:, 1]
+    # predict on X validation + test
     test_proba = clf.predict_proba(X_test)[:, 1]
     # final model evaluation with tuned settings
     val_metrics = get_metrics(y_val, val_proba, best_threshold)
@@ -340,34 +331,32 @@ def main():
     print("TEST acc/ROC-AUC/PR-AUC:", metrics["test_accuracy"], metrics["test_roc_auc"], metrics["test_pr_auc"])
     print("Best threshold:", best_threshold)
 
-    # Create reports folder if it does not exist
-    os.makedirs("reports", exist_ok=True)
-    with open("reports/xgb_best_params.json", "w") as f:
+    with open("reports/lightgbm_best_params.json", "w") as f:
         json.dump({
             "best_params": best_params,
             "best_cv_score_average_precision": best_cv_score,
             "best_threshold": best_threshold,
             "threshold_selection_summary": threshold_df.to_dict(orient="records"),
         }, f, indent=2)
-    print("Saved: reports/xgb_best_params.json")
+    print("Saved: reports/lightgbm_best_params.json")
     # Save evaluation metrics
-    with open("reports/xgb_metrics.json", "w") as f:
+    with open("reports/lightgbm_metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
-    print("Saved: reports/xgb_metrics.json")
+    print("Saved: reports/lightgbm_metrics.json")
     # Save trained model pipeline
-    joblib.dump(clf, "reports/xgb_pipeline.joblib")
-    print("Saved: reports/xgb_pipeline.joblib")
+    joblib.dump(clf, "reports/lightgbm_pipeline.joblib")
+    print("Saved: reports/lightgbm_pipeline.joblib")
 
     # Save patient-level predictions
-    val_results.to_csv("reports/val_predictions.csv", index=False)
-    test_results.to_csv("reports/test_predictions.csv", index=False)
-    print("Saved: reports/val_predictions.csv")
-    print("Saved: reports/test_predictions.csv")
+    val_results.to_csv("reports/lightgbm_val_predictions.csv", index=False)
+    test_results.to_csv("reports/lightgbm_test_predictions.csv", index=False)
+    print("Saved: reports/lightgbm_val_predictions.csv")
+    print("Saved: reports/lightgbm_test_predictions.csv")
 
     # Save split leakage check results
-    with open("reports/split_check.json", "w") as f:
+    with open("reports/lightgbm_split_check.json", "w") as f:
         json.dump(leakage_report, f, indent=2)
-    print("Saved: reports/split_check.json")
+    print("Saved: reports/lightgbm_split_check.json")
 
     # Save confusion matrix results
     confusion_report = {
@@ -385,24 +374,24 @@ def main():
         }
     }
 
-    with open("reports/confusion_matrix.json", "w") as f:
+    with open("reports/lightgbm_confusion_matrix.json", "w") as f:
         json.dump(confusion_report, f, indent=2)
-    print("Saved: reports/confusion_matrix.json")
+    print("Saved: reports/lightgbm_confusion_matrix.json")
 
     # Save false positive and false negative cases
-    val_false_positives.to_csv("reports/val_false_positives.csv", index=False)
-    val_false_negatives.to_csv("reports/val_false_negatives.csv", index=False)
-    test_false_positives.to_csv("reports/test_false_positives.csv", index=False)
-    test_false_negatives.to_csv("reports/test_false_negatives.csv", index=False)
-    
-    print("Saved: reports/val_false_positives.csv")
-    print("Saved: reports/val_false_negatives.csv")
-    print("Saved: reports/test_false_positives.csv")
-    print("Saved: reports/test_false_negatives.csv")
+    val_false_positives.to_csv("reports/lightgbm_val_false_positives.csv", index=False)
+    val_false_negatives.to_csv("reports/lightgbm_val_false_negatives.csv", index=False)
+    test_false_positives.to_csv("reports/lightgbm_test_false_positives.csv", index=False)
+    test_false_negatives.to_csv("reports/lightgbm_test_false_negatives.csv", index=False)
+
+    print("Saved: reports/lightgbm_val_false_positives.csv")
+    print("Saved: reports/lightgbm_val_false_negatives.csv")
+    print("Saved: reports/lightgbm_test_false_positives.csv")
+    print("Saved: reports/lightgbm_test_false_negatives.csv")
 
     # Save feature importance results
-    feature_importance_df.to_csv("reports/xgb_feature_importance.csv", index=False)
-    print("Saved: reports/xgb_feature_importance.csv")
+    feature_importance_df.to_csv("reports/lightgbm_feature_importance.csv", index=False)
+    print("Saved: reports/lightgbm_feature_importance.csv")
 
     # Print top 10 most important features
     print("Top 10 features:")
