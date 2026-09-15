@@ -1,6 +1,6 @@
 import os
 import pandas as pd
-from src.split import make_patient_level_split
+from src.crrt.data.split import make_patient_level_split
 
 def main():
     # IMPORTANT (NDA/HIPAA safety):

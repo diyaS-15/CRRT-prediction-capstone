@@ -1,23 +1,29 @@
 import pandas as pd
 import os
-import numpy as np 
-import sys 
+import numpy as np
+import sys
 from typing import Tuple
 
-# Public API, names other files can access 
+from sklearn.preprocessing import FunctionTransformer
+
+# Public API, names other files can access
 __all__ = [
     "load_and_preprocess",
     "engineer_features",
+    "compute_target",
+    "make_feature_engineer_step",
     "FEATURE_COLS",
     "TARGET_COL",
-    "REQUIRED_COLS", 
-    "RANDOM_SEED"
+    "REQUIRED_COLS",
+    "FEATURE_INPUT_COLS",
+    "TARGET_SOURCE_COLS",
+    "RANDOM_SEED",
 ]
 
-# CONSTANTS 
+# CONSTANTS
 TARGET_COL = "crrt_within_48h"
-# import in train_model so files are same with what cols go into 
-RANDOM_SEED = 42 # so that all files have same random seed 
+# import in train_model so files are same with what cols go into
+RANDOM_SEED = 42 # so that all files have same random seed
 FEATURE_COLS = [
     "age",
     "tbsa_2nd_3rd",
@@ -34,15 +40,20 @@ FEATURE_COLS = [
     "comorbidity_aki_risk_score",
     "low_urine_output_flag",
 ]
-# cols that have to exsist for pipeline to run
-REQUIRED_COLS = [
+# Source columns used only to derive the target label
+TARGET_SOURCE_COLS = ["crrt_first_24h", "crrt_25_48h"]
+# Raw columns engineer_features consumes (no target sources)
+FEATURE_INPUT_COLS = [
     "age", "tbsa_2nd_3rd", "inhalation_injury",
     "injury_datetime", "admission_datetime",
-    "crrt_first_24h", "crrt_25_48h",
     "total_crystalloid_ml_first_24h", "total_colloid_ml_first_24h", "total_urine_output_ml_first_24h",
-    "admission_weight_kg",             
+    "admission_weight_kg",
     "carboxyhemoglobin", "initial_temp_c", "comorbidity",
 ]
+# cols that have to exist for pipeline to run. TARGET_SOURCE_COLS are NOT
+# required here: training data has them (used to derive the label below),
+# but a single patient at serving/inference time won't have an outcome yet.
+REQUIRED_COLS = FEATURE_INPUT_COLS
 # typical impute medians for continous variables 
 IMPUTE_MEDIANS = {
     "carboxyhemoglobin": 5.0,           
@@ -146,12 +157,17 @@ def engineer_features(dfog: pd.DataFrame) -> pd.DataFrame:
     print(df[["injury_datetime", "admission_datetime","hours_injury_to_admission", "late_admission_flag"]].head())
 
     # CRRT within 48hrs labels, 1 if CRRT within 48hrs, 0 if no CRRT, drop rows where src col missing=NaN + dropped at test/train
-    a = df["crrt_first_24h"].map(normalize_yes_no)
-    b = df["crrt_25_48h"].map(normalize_yes_no)
-    df["crrt_within_48h"] = [np.nan if (ai is None and bi is None) else int((ai == 1) or (bi == 1))for ai, bi in zip(a, b)]
-    print("\nCRRT Within 48h Target feature:")
-    print(df["crrt_within_48h"].value_counts(dropna=False))
-    print(f"  Positive rate: {df['crrt_within_48h'].mean():.1%} "f"| Missing: {df['crrt_within_48h'].isna().sum()}")
+    # Target source cols are only present for training data; a serving-time
+    # single-patient row has no outcome yet, so skip label computation then.
+    if all(c in df.columns for c in TARGET_SOURCE_COLS):
+        a = df["crrt_first_24h"].map(normalize_yes_no)
+        b = df["crrt_25_48h"].map(normalize_yes_no)
+        df["crrt_within_48h"] = [np.nan if (ai is None and bi is None) else int((ai == 1) or (bi == 1))for ai, bi in zip(a, b)]
+        print("\nCRRT Within 48h Target feature:")
+        print(df["crrt_within_48h"].value_counts(dropna=False))
+        print(f"  Positive rate: {df['crrt_within_48h'].mean():.1%} "f"| Missing: {df['crrt_within_48h'].isna().sum()}")
+    else:
+        print("\nSkipping CRRT target computation (target source columns not present — serving/inference mode).")
 
     # Total Fluid Balance, large pos fluid balance= CRRT predictor
     df["total_crystalloid_ml_first_24h"]  = pd.to_numeric(df["total_crystalloid_ml_first_24h"],  errors="coerce")

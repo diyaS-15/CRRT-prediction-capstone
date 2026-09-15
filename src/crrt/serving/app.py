@@ -2,6 +2,9 @@ import streamlit as st
 import pandas as pd
 import joblib
 import os
+from datetime import datetime, timedelta
+
+from src.crrt.features.preprocessing import engineer_features, FEATURE_COLS
 
 MODEL_PATH = "reports/xgb_pipeline.joblib"
 DECISION_THRESHOLD = 0.5
@@ -16,73 +19,53 @@ def load_model():
     return joblib.load(MODEL_PATH)
 
 
-def build_features(
+def build_raw_row(
     age,
-    weight_kg,
+    admission_weight_kg,
     tbsa_2nd,
     tbsa_3rd,
     inhalation_injury,
     hours_injury_to_admission,
-    fluid_intake_24h,
-    fluid_output_24h,
-    urine_output_24h,
-    temperature_c,
+    total_crystalloid_ml_first_24h,
+    total_colloid_ml_first_24h,
+    total_urine_output_ml_first_24h,
+    initial_temp_c,
     carboxyhemoglobin,
-    baseline_creatinine,
     diabetes,
     hypertension,
     chronic_kidney_disease,
-):
-    tbsa_2nd_3rd = tbsa_2nd + tbsa_3rd
+) -> pd.DataFrame:
+    """Assemble a single-row dataframe matching the raw schema that
+    features/preprocessing.py::engineer_features expects, so serving-time
+    feature engineering is identical to training-time feature engineering.
+    """
+    admission_datetime = datetime.now()
+    injury_datetime = admission_datetime - timedelta(hours=hours_injury_to_admission)
 
-    inhalation_flag = 1 if inhalation_injury else 0
-    revised_baux_score = age + tbsa_2nd_3rd + (17 * inhalation_flag)
-    if revised_baux_score < 60:
-        burn_severity_tier = 0
-    elif revised_baux_score < 100:
-        burn_severity_tier = 1
-    elif revised_baux_score < 140:
-        burn_severity_tier = 2
-    else:
-        burn_severity_tier = 3
+    comorbidity_parts = []
+    if diabetes:
+        comorbidity_parts.append("diabetes")
+    if hypertension:
+        comorbidity_parts.append("hypertension")
+    if chronic_kidney_disease:
+        comorbidity_parts.append("chronic kidney disease")
+    comorbidity = ", ".join(comorbidity_parts) if comorbidity_parts else "none"
 
-    late_admission_flag = 1 if hours_injury_to_admission > 6 else 0
-
-    fluid_balance_24h = fluid_intake_24h - fluid_output_24h
-    fluid_overload_flag = 1 if fluid_balance_24h > 0 else 0
-
-    urine_output_per_kg = urine_output_24h / weight_kg if weight_kg > 0 else 0
-    low_urine_output_flag = 1 if urine_output_per_kg < 12 else 0
-
-    hypothermia_flag = 1 if temperature_c < 36.0 else 0
-    carboxyhemoglobin_risk_flag = 1 if carboxyhemoglobin >= 25 else 0
-
-    comorbidity_aki_risk_score = (
-        int(diabetes) +
-        int(hypertension) +
-        (2 * int(chronic_kidney_disease))
-    )
-
-    return {
+    raw_row = {
         "age": age,
-        "weight_kg": weight_kg,
-        "tbsa_2nd": tbsa_2nd,
-        "tbsa_3rd": tbsa_3rd,
-        "tbsa_2nd_3rd": tbsa_2nd_3rd,
-        "burn_severity_tier": burn_severity_tier,
-        "inhalation_flag": inhalation_flag,
-        "hours_injury_to_admission": hours_injury_to_admission,
-        "late_admission_flag": late_admission_flag,
-        "fluid_balance_24h": fluid_balance_24h,
-        "fluid_overload_flag": fluid_overload_flag,
-        "urine_output_per_kg": urine_output_per_kg,
-        "low_urine_output_flag": low_urine_output_flag,
-        "hypothermia_flag": hypothermia_flag,
-        "carboxyhemoglobin_risk_flag": carboxyhemoglobin_risk_flag,
-        "comorbidity_aki_risk_score": comorbidity_aki_risk_score,
-        "baseline_creatinine": baseline_creatinine,
-        "revised_baux_score": revised_baux_score,
+        "tbsa_2nd_3rd": tbsa_2nd + tbsa_3rd,
+        "inhalation_injury": "yes" if inhalation_injury else "no",
+        "injury_datetime": injury_datetime,
+        "admission_datetime": admission_datetime,
+        "total_crystalloid_ml_first_24h": total_crystalloid_ml_first_24h,
+        "total_colloid_ml_first_24h": total_colloid_ml_first_24h,
+        "total_urine_output_ml_first_24h": total_urine_output_ml_first_24h,
+        "admission_weight_kg": admission_weight_kg,
+        "carboxyhemoglobin": carboxyhemoglobin,
+        "initial_temp_c": initial_temp_c,
+        "comorbidity": comorbidity,
     }
+    return pd.DataFrame([raw_row])
 
 
 def make_prediction(model, input_df: pd.DataFrame, threshold: float = 0.5):
@@ -104,7 +87,7 @@ with st.form("patient_form"):
     st.subheader("Patient Information")
 
     age = st.number_input("Age", min_value=0, max_value=120, value=45)
-    weight_kg = st.number_input("Weight (kg)", min_value=1.0, max_value=300.0, value=70.0)
+    admission_weight_kg = st.number_input("Weight (kg)", min_value=1.0, max_value=300.0, value=70.0)
 
     tbsa_2nd = st.number_input("2nd Degree TBSA %", min_value=0.0, max_value=100.0, value=10.0)
     tbsa_3rd = st.number_input("3rd Degree TBSA %", min_value=0.0, max_value=100.0, value=5.0)
@@ -117,27 +100,27 @@ with st.form("patient_form"):
         step=0.5
     )
 
-    fluid_intake_24h = st.number_input(
-        "Fluid Intake in First 24h (mL)",
+    total_crystalloid_ml_first_24h = st.number_input(
+        "Total Crystalloid Fluids in First 24h (mL)",
         min_value=0.0,
         value=5000.0,
         step=100.0
     )
-    fluid_output_24h = st.number_input(
-        "Total Fluid Output in First 24h (mL)",
+    total_colloid_ml_first_24h = st.number_input(
+        "Total Colloid Fluids in First 24h (mL)",
         min_value=0.0,
-        value=2500.0,
+        value=0.0,
         step=100.0
     )
-    urine_output_24h = st.number_input(
+    total_urine_output_ml_first_24h = st.number_input(
         "Urine Output in First 24h (mL)",
         min_value=0.0,
         value=1000.0,
         step=50.0
     )
 
-    temperature_c = st.number_input(
-        "Temperature (°C)",
+    initial_temp_c = st.number_input(
+        "Initial Temperature (°C)",
         min_value=30.0,
         max_value=45.0,
         value=37.0,
@@ -151,13 +134,6 @@ with st.form("patient_form"):
         step=0.1
     )
 
-    baseline_creatinine = st.number_input(
-        "Baseline Creatinine",
-        min_value=0.0,
-        value=1.0,
-        step=0.1
-    )
-
     st.markdown("**Comorbidities**")
     diabetes = st.checkbox("Diabetes")
     hypertension = st.checkbox("Hypertension")
@@ -168,25 +144,26 @@ with st.form("patient_form"):
 
 if submitted:
     try:
-        features = build_features(
+        raw_row = build_raw_row(
             age=age,
-            weight_kg=weight_kg,
+            admission_weight_kg=admission_weight_kg,
             tbsa_2nd=tbsa_2nd,
             tbsa_3rd=tbsa_3rd,
             inhalation_injury=inhalation_injury,
             hours_injury_to_admission=hours_injury_to_admission,
-            fluid_intake_24h=fluid_intake_24h,
-            fluid_output_24h=fluid_output_24h,
-            urine_output_24h=urine_output_24h,
-            temperature_c=temperature_c,
+            total_crystalloid_ml_first_24h=total_crystalloid_ml_first_24h,
+            total_colloid_ml_first_24h=total_colloid_ml_first_24h,
+            total_urine_output_ml_first_24h=total_urine_output_ml_first_24h,
+            initial_temp_c=initial_temp_c,
             carboxyhemoglobin=carboxyhemoglobin,
-            baseline_creatinine=baseline_creatinine,
             diabetes=diabetes,
             hypertension=hypertension,
             chronic_kidney_disease=chronic_kidney_disease,
         )
 
-        input_df = pd.DataFrame([features])
+        # Same feature engineering used at training time, so serving can't drift from it.
+        engineered = engineer_features(raw_row)
+        input_df = engineered[FEATURE_COLS]
 
         st.subheader("Model Input")
         st.dataframe(input_df, use_container_width=True)

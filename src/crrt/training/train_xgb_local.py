@@ -1,5 +1,19 @@
-# Train and evaluate an XGBoost model for CRRT prediction
-
+# EXPERIMENTAL variant of the XGBoost CRRT model — NOT the canonical pipeline.
+# See train_xgb.py for the canonical model used by serving/app.py and
+# training/generate_report.py, which predicts the composite target
+# "crrt_within_48h".
+#
+# This script instead predicts MODEL_TARGET_COL = "crrt_25_48h" alone, using
+# only features available in the first 24h (MODEL_FEATURE_COLS), and
+# explicitly blocks columns like "crrt_first_24h" and "urine_output_per_kg"
+# that could leak information about the later-window outcome. It exists to
+# test whether the canonical composite target is leaking signal from
+# crrt_first_24h rather than genuinely predicting the 25-48h window. Its
+# outputs (reports/cv_*.csv, reports/final_metrics.json) are diagnostic only
+# and are not consumed by the sponsor report or the Streamlit app. Promote
+# this script to canonical (and retire train_xgb.py) only if the leakage
+# concern is confirmed and the team decides the narrower 25-48h target is the
+# right one to ship.
 import os
 import json
 import numpy as np
@@ -21,8 +35,8 @@ from sklearn.metrics import (
 from sklearn.model_selection import ParameterGrid, GroupKFold
 
 from xgboost import XGBClassifier
-from .split import make_patient_level_split
-from .preprocessing import load_and_preprocess, RANDOM_SEED
+from ..data.split import make_patient_level_split
+from ..features.preprocessing import load_and_preprocess, RANDOM_SEED
 
 MODEL_TARGET_COL = "crrt_25_48h"
 

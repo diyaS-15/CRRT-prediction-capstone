@@ -12,12 +12,13 @@ from sklearn.impute import SimpleImputer
 from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score, confusion_matrix, recall_score, precision_score, f1_score
 
 from catboost import CatBoostClassifier
-from .split import make_patient_level_split, get_Xy 
-from .preprocessing import load_and_preprocess, FEATURE_COLS, TARGET_COL, RANDOM_SEED 
+from ..data.split import make_patient_level_split, get_Xy 
+from ..features.preprocessing import load_and_preprocess, FEATURE_COLS, TARGET_COL, RANDOM_SEED 
 
 # decision threshold (lower=more sensitive to catch more cases but potential more false positives)
-# [REEVALUATE AFTER ROC CURVE]
-DECISION_THRESHOLD = 0.4
+# tuned per-run on the validation set (see THRESHOLD_CANDIDATES) rather than fixed,
+# since missing a true CRRT case (false negative) is clinically costlier than a false alarm.
+THRESHOLD_CANDIDATES = [0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]
 
 # Build preprocessing steps for numeric and categorical features
 def build_preprocessor(df: pd.DataFrame):
@@ -63,6 +64,31 @@ def verify_no_patient_leakage(train_df, val_df, test_df, group_col):
 
     return leakage_report
 
+# Safely calculate ROC-AUC only if both classes are present
+def safe_auc(y, p):
+    return float(roc_auc_score(y, p)) if len(np.unique(y)) > 1 else None
+
+# Safely calculate PR-AUC only if both classes are present
+def safe_prauc(y, p):
+    return float(average_precision_score(y, p)) if len(np.unique(y)) > 1 else None
+
+def get_metrics(y_true, y_proba, threshold):
+    y_pred = (y_proba >= threshold).astype(int)
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+    return {
+        "accuracy": float(accuracy_score(y_true, y_pred)),
+        "recall": float(recall_score(y_true, y_pred, zero_division=0)),
+        "precision": float(precision_score(y_true, y_pred, zero_division=0)),
+        "f1": float(f1_score(y_true, y_pred, zero_division=0)),
+        "roc_auc": safe_auc(y_true, y_proba),
+        "pr_auc": safe_prauc(y_true, y_proba),
+        "tn": int(tn),
+        "fp": int(fp),
+        "fn": int(fn),
+        "tp": int(tp),
+        "pred": y_pred,
+    }
+
 def main():
    # Load dataset from local file path
     data_path = os.getenv("BCQP_DATA_PATH", "data/synthetic_data.csv")
@@ -76,6 +102,10 @@ def main():
     group_col = "patient_id" if "patient_id" in df.columns else "record_id"
     if group_col not in df.columns:
         raise ValueError(f"Group column '{group_col}' not found in dataframe.")
+
+    # Drop rows with missing target before splitting so SplitResult indices
+    # align with the df we slice into train/val/test below.
+    df = df.dropna(subset=[label_col]).reset_index(drop=True)
 
     # Split data by patient/group to avoid leakage
     splits = make_patient_level_split(df, group_col=group_col, val_size=0.10, test_size=0.20, seed=RANDOM_SEED)
@@ -95,33 +125,49 @@ def main():
     # scaling positive bc minority class so it's not ignored 
     scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
 
-    # Tell CatBoost to care more about the positive (CRRT=1) class
-    # Handle class imbalance: CRRT=1 is rare, so give it higher weight
-    class_weights = {0: 1.0, 1: float(scale_pos_weight)}
-    model = CatBoostClassifier(
-    iterations=100,
-    learning_rate=0.1,
-    depth=6,
-    verbose=0,
-    class_weights=[1.0, float(scale_pos_weight)]  # [weight for class 0, weight for class 1]
-    )
-
     print(f"scale_pos_weight: {scale_pos_weight:.2f}  (train positives: {(y_train==1).sum()}, negatives: {(y_train==0).sum()})")
 
     # Create preprocessing pipeline using training data columns
-    
     preprocessor = build_preprocessor(X_train)
 
-    # Set up CatBoost model
+    # Set up CatBoost model; tell it to care more about the positive (CRRT=1)
+    # class since CRRT=1 is rare, so give it higher weight
     model = CatBoostClassifier(
-        iterations=100,      
-        learning_rate=0.1,   
-        depth=6,              
-        verbose=0   
+        iterations=100,
+        learning_rate=0.1,
+        depth=6,
+        verbose=0,
+        class_weights=[1.0, float(scale_pos_weight)],  # [weight for class 0, weight for class 1]
     )
 
     clf = Pipeline([("prep", preprocessor), ("model", model)])
     clf.fit(X_train, y_train)
+
+    # threshold tuning on validation set, ranked to minimize false negatives first
+    # (a missed CRRT case is clinically costlier than a false alarm)
+    val_proba = clf.predict_proba(X_val)[:, 1]
+    threshold_rows = []
+    for threshold in THRESHOLD_CANDIDATES:
+        m = get_metrics(y_val, val_proba, threshold)
+        threshold_rows.append({
+            "threshold": threshold,
+            "fn": m["fn"],
+            "recall": m["recall"],
+            "precision": m["precision"],
+            "f1": m["f1"],
+            "pr_auc": m["pr_auc"],
+            "fp": m["fp"],
+            "accuracy": m["accuracy"],
+        })
+    threshold_df = pd.DataFrame(threshold_rows).sort_values(
+        by=["fn", "recall", "precision", "f1", "pr_auc", "fp", "accuracy"],
+        ascending=[True, False, False, False, False, True, False],
+    )
+    best_threshold = float(threshold_df.iloc[0]["threshold"])
+    os.makedirs("reports", exist_ok=True)
+    threshold_df.to_csv("reports/cat_threshold_tuning.csv", index=False)
+    print("Saved: reports/cat_threshold_tuning.csv")
+    print("Best threshold:", best_threshold)
 
     # Get feature names after preprocessing
     feature_names = clf.named_steps["prep"].get_feature_names_out()
@@ -135,12 +181,11 @@ def main():
         "importance": importances
     }).sort_values("importance", ascending=False)
 
-    # predict on X validation + test 
-    val_proba  = clf.predict_proba(X_val)[:, 1]
+    # predict on X test (val_proba already computed above during threshold tuning)
     test_proba = clf.predict_proba(X_test)[:, 1]
-    # prediction threshold adjuatable w/ deicsion threshold now 
-    val_pred  = (val_proba  >= DECISION_THRESHOLD).astype(int)
-    test_pred = (test_proba >= DECISION_THRESHOLD).astype(int)
+    # prediction threshold tuned above on the validation set
+    val_pred  = (val_proba  >= best_threshold).astype(int)
+    test_pred = (test_proba >= best_threshold).astype(int)
 
     # Confusion matrix values for validation and test sets
     val_tn, val_fp, val_fn, val_tp = confusion_matrix(y_val, val_pred).ravel()
@@ -184,19 +229,11 @@ def main():
         (test_results["actual"] == 1) & (test_results["pred_label"] == 0)
     ]
 
-    # Safely calculate ROC-AUC only if both classes are present
-    def safe_auc(y, p):
-        return float(roc_auc_score(y, p)) if len(np.unique(y)) > 1 else None
-
-    # Safely calculate PR-AUC only if both classes are present
-    def safe_prauc(y, p):
-        return float(average_precision_score(y, p)) if len(np.unique(y)) > 1 else None
-
     # Store model evaluation results
     metrics = {
         "label_col": label_col,
         "group_col": group_col,
-        "decision_threshold": DECISION_THRESHOLD,
+        "decision_threshold": best_threshold,
         "scale_pos_weight": float(scale_pos_weight),
         "rows": int(len(df)),
         "train_rows": int(len(train_df)),
@@ -238,7 +275,7 @@ def main():
     print("Saved: reports/cat_metrics.json")
     # Save trained model pipeline
     joblib.dump(clf, "reports/cat_pipeline.joblib")
-    print("Saved: reports/car_pipeline.joblib")
+    print("Saved: reports/cat_pipeline.joblib")
 
     # Save patient-level predictions
     val_results.to_csv("reports/cat-val_predictions.csv", index=False)
