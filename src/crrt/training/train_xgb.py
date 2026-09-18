@@ -8,13 +8,28 @@
 # See train_xgb_local.py for an EXPERIMENTAL variant that instead predicts
 # crrt_25_48h alone from a leakage-blocked, first-24h-only feature set, used
 # to sanity-check whether the composite target above is leaking information
-# from crrt_first_24h. That variant is not used by serving or the sponsor
-# report; promote it to canonical only if that leakage-sensitivity check
-# turns out to matter clinically.
+# from crrt_first_24h.
+#
+# RESOLVED (2026-09-17): checked directly on data/synthetic_data.csv — every
+# patient with crrt_first_24h=Yes also has crrt_25_48h=Yes (20/20, zero
+# unique contribution), so crrt_within_48h and crrt_25_48h are literally the
+# identical label vector in this dataset. Running train_xgb.py and
+# train_xgb_local.py side by side on the same 200 rows produced the exact
+# same test-set confusion matrix (TP=2, FP=3, TN=30, FN=5) even though
+# train_xgb_local.py additionally blocks urine_output_per_kg and
+# low_urine_output_flag (the concurrent, same-window AKI-severity features
+# most likely to leak). Removing those features did not change the hard
+# predictions at all, and only shifted ROC-AUC/PR-AUC slightly. Conclusion:
+# no meaningful leakage found — this canonical pipeline stays canonical.
+# Caveat worth flagging to whoever owns the synthetic data generator: the
+# 100%-overlap relationship between crrt_first_24h and crrt_25_48h looks
+# like a generator artifact, not realistic clinical variation (real patients
+# can need CRRT in the first 24h and recover by 25-48h). If real data
+# doesn't preserve that overlap, this leakage check should be re-run before
+# trusting the composite target on real patients.
 import os
 import json
 import joblib
-import numpy as np
 import pandas as pd
 import shap
 import matplotlib
@@ -22,91 +37,20 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 # agg = noninteractive background so saved without display
 
-from sklearn.compose import ColumnTransformer
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
-from sklearn.impute import SimpleImputer
-from sklearn.metrics import accuracy_score, roc_auc_score, average_precision_score, confusion_matrix, recall_score, precision_score, f1_score
+from sklearn.metrics import accuracy_score, confusion_matrix, recall_score, precision_score, f1_score
 from sklearn.model_selection import RandomizedSearchCV, GroupKFold
 
 from xgboost import XGBClassifier
 from ..data.split import make_patient_level_split, get_Xy
-from ..features.preprocessing import load_and_preprocess, FEATURE_COLS, TARGET_COL, RANDOM_SEED
+from ..features.preprocessing import load_and_preprocess, TARGET_COL, RANDOM_SEED
+from .common import build_preprocessor, verify_no_patient_leakage, safe_auc, safe_prauc, get_metrics
 
 # decision threshold (lower=more sensitive to catch more cases but potential more false positives)
 # [REEVALUATE AFTER ROC CURVE]
 DECISION_THRESHOLD = 0.4
 THRESHOLD_CANDIDATES = [0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]
 TUNING_N_ITER = 25
-
-# Build preprocessing steps for numeric and categorical features
-def build_preprocessor(df: pd.DataFrame):
-    available = [c for c in FEATURE_COLS if c in df.columns]
-    numeric_cols = df[available].select_dtypes(include=["number", "bool"]).columns.tolist()
-    categorical_cols = [c for c in available if c not in numeric_cols]
-
-    num_pipe = Pipeline([("imputer", SimpleImputer(strategy="median"))])
-    cat_pipe = Pipeline([
-        ("imputer", SimpleImputer(strategy="most_frequent")),
-        ("onehot", OneHotEncoder(handle_unknown="ignore"))
-    ])
-
-    return ColumnTransformer(
-        transformers=[
-            ("num", num_pipe, numeric_cols),
-            ("cat", cat_pipe, categorical_cols),
-        ],
-        remainder="drop",
-    )
-
-# Check that no patient appears in more than one split
-def verify_no_patient_leakage(train_df, val_df, test_df, group_col):
-    train_ids = set(train_df[group_col])
-    val_ids = set(val_df[group_col])
-    test_ids = set(test_df[group_col])
-    
-    leakage_report = {
-        "group_col": group_col,
-        "train_unique_ids": len(train_ids),
-        "val_unique_ids": len(val_ids),
-        "test_unique_ids": len(test_ids),
-        "train_val_overlap": len(train_ids & val_ids),
-        "train_test_overlap": len(train_ids & test_ids),
-        "val_test_overlap": len(val_ids & test_ids),
-    }
-
-    leakage_report["leakage_found"] = (
-        leakage_report["train_val_overlap"] > 0 or
-        leakage_report["train_test_overlap"] > 0 or
-        leakage_report["val_test_overlap"] > 0
-    )
-
-    return leakage_report
-
-# Safely calculate ROC-AUC only if both classes are present
-def safe_auc(y, p):
-    return float(roc_auc_score(y, p)) if len(np.unique(y)) > 1 else None
-
-# Safely calculate PR-AUC only if both classes are present
-def safe_prauc(y, p):
-    return float(average_precision_score(y, p)) if len(np.unique(y)) > 1 else None
-
-def get_metrics(y_true, y_proba, threshold):
-    y_pred = (y_proba >= threshold).astype(int)
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-    return {
-        "accuracy": float(accuracy_score(y_true, y_pred)),
-        "recall": float(recall_score(y_true, y_pred, zero_division=0)),
-        "precision": float(precision_score(y_true, y_pred, zero_division=0)),
-        "f1": float(f1_score(y_true, y_pred, zero_division=0)),
-        "roc_auc": safe_auc(y_true, y_proba),
-        "pr_auc": safe_prauc(y_true, y_proba),
-        "tn": int(tn),
-        "fp": int(fp),
-        "fn": int(fn),
-        "tp": int(tp),
-        "pred": y_pred,
-    }
 
 def main():
     os.makedirs("reports", exist_ok=True)

@@ -55,6 +55,56 @@ def section(title, inner_html):
     </div>
     """
 
+def headline_metrics_card(model_name, metrics):
+    """Lead with recall (sensitivity) and PR-AUC, not accuracy. With CRRT this
+    imbalanced (~17% positive), a model that always predicts "no CRRT" scores
+    ~83% accuracy while missing every true case — accuracy alone would
+    overstate how good the model is at the thing that actually matters
+    clinically: not missing a patient who needs CRRT. Recall and PR-AUC are
+    the honest headline; accuracy is shown only as a secondary reference."""
+    if not metrics:
+        return "<p><em>Missing</em></p>"
+    test_recall = metrics.get("test_sensitivity")
+    test_pr_auc = metrics.get("test_pr_auc")
+    test_precision = metrics.get("test_precision")
+    test_accuracy = metrics.get("test_accuracy")
+    test_fn = metrics.get("test_fn")
+    test_tp = metrics.get("test_tp")
+
+    def pct(v):
+        return f"{v:.1%}" if isinstance(v, (int, float)) else "N/A"
+
+    missed = (
+        f"<p class=\"muted\">Missed {test_fn} of {test_fn + test_tp} true CRRT cases on the test set.</p>"
+        if isinstance(test_fn, int) and isinstance(test_tp, int) and (test_fn + test_tp) > 0
+        else ""
+    )
+
+    return f"""
+    <div class="headline">
+      <div class="stat stat-primary">
+        <div class="stat-label">Test Recall (Sensitivity)</div>
+        <div class="stat-value">{pct(test_recall)}</div>
+        <div class="stat-sub">share of true CRRT cases caught</div>
+      </div>
+      <div class="stat stat-primary">
+        <div class="stat-label">Test PR-AUC</div>
+        <div class="stat-value">{pct(test_pr_auc)}</div>
+        <div class="stat-sub">precision/recall tradeoff, imbalance-aware</div>
+      </div>
+      <div class="stat stat-secondary">
+        <div class="stat-label">Test Precision</div>
+        <div class="stat-value">{pct(test_precision)}</div>
+      </div>
+      <div class="stat stat-secondary">
+        <div class="stat-label">Test Accuracy</div>
+        <div class="stat-value">{pct(test_accuracy)}</div>
+        <div class="stat-sub">reference only — misleading alone on imbalanced data</div>
+      </div>
+    </div>
+    {missed}
+    """
+
 def main():
     REPORTS_DIR.mkdir(exist_ok=True)
 
@@ -100,18 +150,42 @@ def main():
     th, td {{ border: 1px solid #ddd; padding: 6px 8px; font-size: 14px; }}
     th {{ background: #f0f0f0; text-align: left; }}
     img {{ max-width: 100%; border: 1px solid #ddd; border-radius: 8px; }}
+    .headline {{ display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 8px; }}
+    .stat {{ flex: 1 1 120px; border-radius: 8px; padding: 10px 12px; }}
+    .stat-primary {{ background: #eaf3ff; border: 1px solid #b6d7ff; }}
+    .stat-secondary {{ background: #f3f3f3; border: 1px solid #ddd; }}
+    .stat-label {{ font-size: 12px; color: #555; text-transform: uppercase; letter-spacing: 0.03em; }}
+    .stat-value {{ font-size: 26px; font-weight: bold; }}
+    .stat-sub {{ font-size: 11px; color: #777; }}
   </style>
 </head>
 <body>
   <h1>CRRT Prediction – Sponsor Summary Report</h1>
   <p class="muted">Generated: {now}</p>
 
+  <div class="card">
+    <h2>Why recall, not accuracy, is the headline</h2>
+    <p>CRRT is rare in this data (~17% of patients). A model that always predicts
+    "no CRRT" would score ~83% accuracy while catching zero true cases — accuracy
+    alone would make a useless model look strong. The numbers that actually matter
+    for a clinical screening tool are <strong>recall/sensitivity</strong> (of the
+    patients who truly needed CRRT, how many did we flag?) and
+    <strong>PR-AUC</strong> (precision/recall tradeoff, which — unlike ROC-AUC —
+    isn't inflated by the large majority-class). Accuracy is reported below for
+    completeness but should not be read as the primary success metric.</p>
+  </div>
+
+  <div class="grid">
+    {section("Headline Metrics (XGBoost)", headline_metrics_card("XGBoost", xgb_metrics))}
+    {section("Headline Metrics (CatBoost)", headline_metrics_card("CatBoost", cat_metrics))}
+  </div>
+
   {section("Dataset / Split Check (XGBoost)", pretty_json(xgb_split))}
   {section("Dataset / Split Check (CatBoost)", pretty_json(cat_split))}
 
   <div class="grid">
-    {section("Metrics (XGBoost)", pretty_json(xgb_metrics))}
-    {section("Metrics (CatBoost)", pretty_json(cat_metrics))}
+    {section("Full Metrics (XGBoost)", pretty_json(xgb_metrics))}
+    {section("Full Metrics (CatBoost)", pretty_json(cat_metrics))}
   </div>
 
   <div class="grid">

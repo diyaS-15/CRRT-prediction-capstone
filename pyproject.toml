@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "crrt-prediction-capstone"
+version = "0.1.0"
+description = "Predicting Continuous Renal Replacement Therapy (CRRT) need in burn patients using machine learning."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "pandas>=2.3,<3",
+    "numpy>=2.2,<3",
+    "scikit-learn>=1.7,<2",
+    "xgboost>=3.2,<4",
+    "catboost>=1.2,<2",
+    "lightgbm>=4.7,<5",
+    "shap>=0.49,<1",
+    "matplotlib>=3.10,<4",
+    "seaborn>=0.13,<1",
+    "streamlit>=1.56,<2",
+    "joblib>=1.5,<2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.setuptools.packages.find]
+# The codebase imports via "src.crrt..." (both absolute imports like
+# `from src.crrt.data.split import ...` and relative imports within the
+# package), so "src" itself -- not "crrt" -- is the top-level installed
+# package. src/__init__.py already exists to support this.
+where = ["."]
+include = ["src*"]

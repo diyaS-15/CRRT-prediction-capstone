@@ -10,10 +10,20 @@
 # test whether the canonical composite target is leaking signal from
 # crrt_first_24h rather than genuinely predicting the 25-48h window. Its
 # outputs (reports/cv_*.csv, reports/final_metrics.json) are diagnostic only
-# and are not consumed by the sponsor report or the Streamlit app. Promote
-# this script to canonical (and retire train_xgb.py) only if the leakage
-# concern is confirmed and the team decides the narrower 25-48h target is the
-# right one to ship.
+# and are not consumed by the sponsor report or the Streamlit app.
+#
+# RESOLVED (2026-09-17): ran this side by side with train_xgb.py on
+# data/synthetic_data.csv. crrt_first_24h=Yes turned out to be a strict
+# subset of crrt_25_48h=Yes (20/20 overlap), so the canonical composite
+# target and this script's crrt_25_48h target are identical label vectors in
+# this dataset. Despite that, and despite this script additionally blocking
+# urine_output_per_kg/low_urine_output_flag, both pipelines produced the
+# exact same test-set confusion matrix (TP=2, FP=3, TN=30, FN=5) — no
+# leakage-driven inflation found in the canonical pipeline. train_xgb.py
+# remains canonical; this script stays experimental/diagnostic. Re-run this
+# comparison if real (non-synthetic) data is ever substituted in, since the
+# crrt_first_24h/crrt_25_48h overlap that made this check clean is likely a
+# synthetic-data artifact.
 import os
 import json
 import numpy as np

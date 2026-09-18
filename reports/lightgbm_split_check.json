@@ -1,0 +1,10 @@
+{
+  "group_col": "record_id",
+  "train_unique_ids": 140,
+  "val_unique_ids": 20,
+  "test_unique_ids": 40,
+  "train_val_overlap": 0,
+  "train_test_overlap": 0,
+  "val_test_overlap": 0,
+  "leakage_found": false
+}

@@ -1,0 +1,87 @@
+{
+  "best_params": {
+    "subsample": 0.9,
+    "reg_lambda": 2,
+    "reg_alpha": 0.5,
+    "num_leaves": 15,
+    "n_estimators": 200,
+    "min_child_samples": 10,
+    "max_depth": 3,
+    "learning_rate": 0.05,
+    "colsample_bytree": 0.8
+  },
+  "best_cv_score_average_precision": 0.7660989010989011,
+  "best_threshold": 0.4,
+  "threshold_selection_summary": [
+    {
+      "threshold": 0.4,
+      "fn": 1,
+      "recall": 0.8333333333333334,
+      "precision": 0.8333333333333334,
+      "f1": 0.8333333333333334,
+      "pr_auc": 0.8722222222222222,
+      "fp": 1,
+      "accuracy": 0.9
+    },
+    {
+      "threshold": 0.45,
+      "fn": 1,
+      "recall": 0.8333333333333334,
+      "precision": 0.8333333333333334,
+      "f1": 0.8333333333333334,
+      "pr_auc": 0.8722222222222222,
+      "fp": 1,
+      "accuracy": 0.9
+    },
+    {
+      "threshold": 0.5,
+      "fn": 1,
+      "recall": 0.8333333333333334,
+      "precision": 0.8333333333333334,
+      "f1": 0.8333333333333334,
+      "pr_auc": 0.8722222222222222,
+      "fp": 1,
+      "accuracy": 0.9
+    },
+    {
+      "threshold": 0.55,
+      "fn": 1,
+      "recall": 0.8333333333333334,
+      "precision": 0.8333333333333334,
+      "f1": 0.8333333333333334,
+      "pr_auc": 0.8722222222222222,
+      "fp": 1,
+      "accuracy": 0.9
+    },
+    {
+      "threshold": 0.6,
+      "fn": 1,
+      "recall": 0.8333333333333334,
+      "precision": 0.8333333333333334,
+      "f1": 0.8333333333333334,
+      "pr_auc": 0.8722222222222222,
+      "fp": 1,
+      "accuracy": 0.9
+    },
+    {
+      "threshold": 0.65,
+      "fn": 1,
+      "recall": 0.8333333333333334,
+      "precision": 0.8333333333333334,
+      "f1": 0.8333333333333334,
+      "pr_auc": 0.8722222222222222,
+      "fp": 1,
+      "accuracy": 0.9
+    },
+    {
+      "threshold": 0.7,
+      "fn": 1,
+      "recall": 0.8333333333333334,
+      "precision": 0.8333333333333334,
+      "f1": 0.8333333333333334,
+      "pr_auc": 0.8722222222222222,
+      "fp": 1,
+      "accuracy": 0.9
+    }
+  ]
+}

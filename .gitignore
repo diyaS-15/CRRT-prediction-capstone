@@ -26,3 +26,11 @@ __pycache__/
 *.pyc
 .ipynb_checkpoints/results/
 results/
+
+# packaging / test artifacts
+*.egg-info/
+.pytest_cache/
+build/
+
+# CatBoost training logs
+catboost_info/
