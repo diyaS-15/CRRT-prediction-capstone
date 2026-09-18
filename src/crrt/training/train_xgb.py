@@ -35,27 +35,30 @@
 # `python -m src.crrt.training.promote_model --model-name crrt-xgb` to
 # compare it against the current Production version and promote it if it's
 # actually better.
-import os
 import json
+import os
+
 import joblib
+import matplotlib
 import pandas as pd
 import shap
-import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-# agg = noninteractive background so saved without display
 
+# agg = noninteractive background so saved without display
 import mlflow
 import mlflow.sklearn
 import optuna
+from sklearn.model_selection import GroupKFold, cross_val_score
 from sklearn.pipeline import Pipeline
-from sklearn.model_selection import cross_val_score, GroupKFold
-
 from xgboost import XGBClassifier
-from ..data.split import make_patient_level_split, get_Xy
-from ..features.preprocessing import load_and_preprocess, TARGET_COL, RANDOM_SEED
-from .common import build_preprocessor, verify_no_patient_leakage, get_metrics
+
+from ..data.split import get_Xy, make_patient_level_split
+from ..features.preprocessing import RANDOM_SEED, TARGET_COL, load_and_preprocess
+from .common import build_preprocessor, get_metrics, verify_no_patient_leakage
 from .mlflow_utils import init_mlflow
+from .shap_utils import make_explainer
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
 
@@ -65,7 +68,8 @@ MLFLOW_MODEL_NAME = "crrt-xgb"
 # [REEVALUATE AFTER ROC CURVE]
 DECISION_THRESHOLD = 0.4
 THRESHOLD_CANDIDATES = [0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]
-TUNING_N_TRIALS = 25
+# overridable for fast CI smoke-tests: CRRT_TUNING_N_TRIALS=3
+TUNING_N_TRIALS = int(os.getenv("CRRT_TUNING_N_TRIALS", "25"))
 
 
 def make_objective(preprocessor, X_train, y_train, groups, scale_pos_weight):
@@ -217,12 +221,18 @@ def main():
         X_train_transformed = clf.named_steps["prep"].transform(X_train)
 
         # uses permutationexplainer bc calls predict_proba directly and never reads model internals so changes in xgboost format don't matter too much
-        explainer = shap.PermutationExplainer(
-            clf.named_steps["model"].predict_proba,
-            X_train_transformed,
-        )
+        # (shared with serving/app.py's per-patient explanations via shap_utils.py)
+        explainer = make_explainer(clf, X_train_transformed)
         # return 2 cols (n_samples, n_features, 2),[:, :, 1] extract shap for CRRT= 1
         shap_values = explainer(X_test_transformed).values[:, :, 1]
+
+        # Save a small background sample so serving/app.py can build the same
+        # kind of explainer for a single new patient without needing access
+        # to the training data itself.
+        background_sample = X_train_transformed[: min(60, X_train_transformed.shape[0])]
+        joblib.dump(background_sample, "reports/xgb_shap_background.joblib")
+        artifact_paths.append("reports/xgb_shap_background.joblib")
+        print("Saved: reports/xgb_shap_background.joblib")
         # shap summary plot to reports folder
         shap.summary_plot(
             shap_values,

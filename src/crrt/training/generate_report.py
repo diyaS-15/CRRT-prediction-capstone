@@ -1,8 +1,8 @@
-from pathlib import Path
-import json
-import csv
 import base64
+import csv
+import json
 from datetime import datetime
+from pathlib import Path
 
 REPORTS_DIR = Path("reports")
 OUT_HTML = REPORTS_DIR / "summary_report.html"
@@ -198,7 +198,7 @@ def main():
     {section("Feature Importance (CatBoost) – top rows", html_table(cat_importance))}
   </div>
 
-  {section("SHAP Summary Plot", f'<p><em>Missing shap_summary.png</em></p>' if not shap_img_uri else f'<img src="{shap_img_uri}" />')}
+  {section("SHAP Summary Plot", '<p><em>Missing shap_summary.png</em></p>' if not shap_img_uri else f'<img src="{shap_img_uri}" />')}
 
   <div class="grid">
     {section("Test False Negatives (XGBoost)", html_table(xgb_fn))}

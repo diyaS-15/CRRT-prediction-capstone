@@ -3,26 +3,28 @@
 # Every run is logged to MLflow and registered as a new (unpromoted) version
 # of the "crrt-lightgbm" model. Hyperparameter search uses Optuna (TPE
 # sampler) instead of RandomizedSearchCV, same rationale as train_xgb.py.
-import os
 import json
+import os
+
 import joblib
+import matplotlib
 import pandas as pd
 import shap
-import matplotlib
+
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
-# agg = noninteractive background so saved without display
 
+# agg = noninteractive background so saved without display
 import mlflow
 import mlflow.sklearn
 import optuna
-from sklearn.pipeline import Pipeline
-from sklearn.model_selection import cross_val_score, GroupKFold
-
 from lightgbm import LGBMClassifier
-from src.crrt.data.split import make_patient_level_split, get_Xy
-from src.crrt.features.preprocessing import load_and_preprocess, TARGET_COL, RANDOM_SEED
-from src.crrt.training.common import build_preprocessor, verify_no_patient_leakage, get_metrics
+from sklearn.model_selection import GroupKFold, cross_val_score
+from sklearn.pipeline import Pipeline
+
+from src.crrt.data.split import get_Xy, make_patient_level_split
+from src.crrt.features.preprocessing import RANDOM_SEED, TARGET_COL, load_and_preprocess
+from src.crrt.training.common import build_preprocessor, get_metrics, verify_no_patient_leakage
 from src.crrt.training.mlflow_utils import init_mlflow
 
 optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -33,7 +35,8 @@ MLFLOW_MODEL_NAME = "crrt-lightgbm"
 # [REEVALUATE AFTER ROC CURVE]
 DECISION_THRESHOLD = 0.4
 THRESHOLD_CANDIDATES = [0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]
-TUNING_N_TRIALS = 25
+# overridable for fast CI smoke-tests: CRRT_TUNING_N_TRIALS=3
+TUNING_N_TRIALS = int(os.getenv("CRRT_TUNING_N_TRIALS", "25"))
 
 
 def make_objective(preprocessor, X_train, y_train, groups, scale_pos_weight):

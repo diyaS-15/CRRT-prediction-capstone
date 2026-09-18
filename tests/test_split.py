@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.crrt.data.split import make_patient_level_split, get_Xy
-from src.crrt.features.preprocessing import TARGET_COL, FEATURE_COLS
+from src.crrt.data.split import get_Xy, make_patient_level_split
+from src.crrt.features.preprocessing import FEATURE_COLS, TARGET_COL
 
 
 def make_grouped_df(n_patients: int = 40, seed: int = 0) -> pd.DataFrame:

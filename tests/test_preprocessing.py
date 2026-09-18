@@ -1,13 +1,12 @@
 import numpy as np
-import pandas as pd
 import pytest
 
 from src.crrt.features.preprocessing import (
-    engineer_features,
     FEATURE_COLS,
     FEATURE_INPUT_COLS,
-    TARGET_SOURCE_COLS,
     TARGET_COL,
+    TARGET_SOURCE_COLS,
+    engineer_features,
 )
 
 

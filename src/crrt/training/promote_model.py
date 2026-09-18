@@ -21,13 +21,13 @@ import warnings
 
 from mlflow.tracking import MlflowClient
 
+from .mlflow_utils import init_mlflow
+
 # MLflow's "stages" concept (None/Staging/Production/Archived) is deprecated
 # in favor of model aliases, but stages are still fully functional and are
 # the term anyone familiar with MLOps will recognize immediately, so this
 # script keeps using them deliberately rather than switching to aliases.
 warnings.filterwarnings("ignore", message=".*transition_model_version_stage.*")
-
-from .mlflow_utils import init_mlflow
 
 DEFAULT_METRIC = "test_sensitivity"  # recall — see generate_report.py for why
 

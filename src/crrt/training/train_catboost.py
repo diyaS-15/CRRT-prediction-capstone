@@ -4,20 +4,20 @@
 # of the "crrt-catboost" model. This script keeps fixed hyperparameters
 # rather than a search (see train_xgb.py/train_lightgbm.py for the Optuna
 # searches) since it was already fixed-hyperparameter before this pass.
-import os
 import json
-import joblib
-import pandas as pd
+import os
 
+import joblib
 import mlflow
 import mlflow.sklearn
-from sklearn.pipeline import Pipeline
-from sklearn.metrics import accuracy_score, confusion_matrix, recall_score, precision_score, f1_score
-
+import pandas as pd
 from catboost import CatBoostClassifier
-from ..data.split import make_patient_level_split, get_Xy
-from ..features.preprocessing import load_and_preprocess, TARGET_COL, RANDOM_SEED
-from .common import build_preprocessor, verify_no_patient_leakage, safe_auc, safe_prauc, get_metrics
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score, precision_score, recall_score
+from sklearn.pipeline import Pipeline
+
+from ..data.split import get_Xy, make_patient_level_split
+from ..features.preprocessing import RANDOM_SEED, TARGET_COL, load_and_preprocess
+from .common import build_preprocessor, get_metrics, safe_auc, safe_prauc, verify_no_patient_leakage
 from .mlflow_utils import init_mlflow
 
 MLFLOW_MODEL_NAME = "crrt-catboost"

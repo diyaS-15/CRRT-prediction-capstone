@@ -32,6 +32,15 @@ dvc = [
     "dvc>=3.67,<4",
 ]
 
+[tool.ruff]
+line-length = 200
+
+[tool.ruff.lint]
+# Correctness-focused subset (pyflakes, pycodestyle errors, import sorting) --
+# deliberately not the full default rule set, which includes style/modernization
+# opinions (UP*, RUF046, C408, BLE001, DTZ005, ...) unrelated to catching real bugs.
+select = ["E", "F", "I"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 

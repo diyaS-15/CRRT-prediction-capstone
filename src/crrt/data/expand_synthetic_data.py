@@ -27,6 +27,7 @@ Writes to data/synthetic_data_expanded.csv (left out of the default training
 path; pass it via BCQP_DATA_PATH to use it).
 """
 import sys
+
 import numpy as np
 import pandas as pd
 

@@ -1,11 +1,14 @@
 from __future__ import annotations
-from dataclasses import dataclass, field 
-from typing import Optional, Tuple
+
+from dataclasses import dataclass, field
+from typing import Tuple
+
 import numpy as np
 import pandas as pd
 from sklearn.model_selection import GroupShuffleSplit
 
-from ..features.preprocessing import FEATURE_COLS, TARGET_COL, RANDOM_SEED
+from ..features.preprocessing import FEATURE_COLS, RANDOM_SEED, TARGET_COL
+
 
 @dataclass(frozen=True)
 class SplitResult:
@@ -120,6 +123,7 @@ def warn_if_imbalanced(summary: dict, tol: float = 0.05) -> None:
 # main
 if __name__ == "__main__":
     import sys
+
     from src.crrt.features.preprocessing import load_and_preprocess
  
     csv_path = sys.argv[1] if len(sys.argv) > 1 else "data/synthetic_data.csv"

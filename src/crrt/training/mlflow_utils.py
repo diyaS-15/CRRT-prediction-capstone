@@ -8,6 +8,7 @@ a real tracking server (e.g. one backed by Postgres + S3 artifact storage)
 once this moves beyond a single laptop.
 """
 import os
+
 os.environ.setdefault("MLFLOW_DISABLE_AGENT_HINT", "1")
 
 import mlflow

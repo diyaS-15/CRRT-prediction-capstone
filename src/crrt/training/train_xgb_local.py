@@ -32,29 +32,29 @@
 # (reports/cv_fold_metrics.csv, cv_top_10/bottom_10_configs.csv) used to
 # characterize the whole grid for the leakage investigation above. An Optuna
 # search would only visit a handful of configs and lose that full picture.
-import os
 import json
+import os
+
 import numpy as np
 import pandas as pd
-
 from sklearn.compose import ColumnTransformer
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
 from sklearn.impute import SimpleImputer
 from sklearn.metrics import (
     accuracy_score,
-    roc_auc_score,
     average_precision_score,
     confusion_matrix,
-    recall_score,
-    precision_score,
     f1_score,
+    precision_score,
+    recall_score,
+    roc_auc_score,
 )
-from sklearn.model_selection import ParameterGrid, GroupKFold
-
+from sklearn.model_selection import GroupKFold, ParameterGrid
+from sklearn.pipeline import Pipeline
+from sklearn.preprocessing import OneHotEncoder
 from xgboost import XGBClassifier
+
 from ..data.split import make_patient_level_split
-from ..features.preprocessing import load_and_preprocess, RANDOM_SEED
+from ..features.preprocessing import RANDOM_SEED, load_and_preprocess
 
 MODEL_TARGET_COL = "crrt_25_48h"
 
@@ -232,11 +232,13 @@ def main():
 
     groups_dev = dev_df[group_col].copy()
 
+    # False/True cover 0/1 too: bool is an int subclass in Python, so
+    # hash(False) == hash(0) and False == 0 -- separate 0: 0, 1: 1 entries
+    # would just be silently-overwriting duplicate keys.
     label_map = {
         "No": 0, "Yes": 1,
         "no": 0, "yes": 1,
         False: 0, True: 1,
-        0: 0, 1: 1
     }
 
     y_dev = dev_df[label_col].map(label_map).astype(int)
