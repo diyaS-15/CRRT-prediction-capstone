@@ -1,8 +1,14 @@
 # --- HIPAA / PHI: NEVER commit raw data ---
-data/
-data/**
-**/data/
-**/data/**
+# Root-anchored (/data/*, not **/data/**) on purpose: an unanchored **/data/
+# rule here previously silently gitignored src/crrt/data/ (a Python package,
+# not a data-storage folder) — nothing in it could ever be committed. Only
+# the actual data-storage directory at the repo root needs this protection.
+# .dvc pointer files (small YAML files holding a content hash, not the data
+# itself) are explicitly un-ignored so the synthetic dataset can be tracked
+# with DVC. Any *real* PHI data must never be `dvc add`-ed here.
+/data/*
+!/data/*.dvc
+!/data/.gitignore
 
 venv/
 .venv
@@ -34,3 +40,9 @@ build/
 
 # CatBoost training logs
 catboost_info/
+
+# MLflow local tracking store + artifact store (each machine/CI run gets its
+# own; a shared setup would point MLFLOW_TRACKING_URI at a real server)
+mlflow.db
+mlruns/
+mlartifacts/

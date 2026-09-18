@@ -1,0 +1,5 @@
+outs:
+- md5: 0d070ff7395ae350441a7063c620a95d
+  size: 79487
+  hash: md5
+  path: lightgbm_pipeline.joblib

@@ -1,4 +1,8 @@
 # Train and evaluate a LightGBM model for CRRT prediction
+#
+# Every run is logged to MLflow and registered as a new (unpromoted) version
+# of the "crrt-lightgbm" model. Hyperparameter search uses Optuna (TPE
+# sampler) instead of RandomizedSearchCV, same rationale as train_xgb.py.
 import os
 import json
 import joblib
@@ -9,22 +13,70 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 # agg = noninteractive background so saved without display
 
+import mlflow
+import mlflow.sklearn
+import optuna
 from sklearn.pipeline import Pipeline
-from sklearn.metrics import accuracy_score, confusion_matrix, recall_score, precision_score, f1_score
-from sklearn.model_selection import RandomizedSearchCV, GroupKFold
+from sklearn.model_selection import cross_val_score, GroupKFold
 
 from lightgbm import LGBMClassifier
 from src.crrt.data.split import make_patient_level_split, get_Xy
 from src.crrt.features.preprocessing import load_and_preprocess, TARGET_COL, RANDOM_SEED
-from src.crrt.training.common import build_preprocessor, verify_no_patient_leakage, safe_auc, safe_prauc, get_metrics
+from src.crrt.training.common import build_preprocessor, verify_no_patient_leakage, get_metrics
+from src.crrt.training.mlflow_utils import init_mlflow
+
+optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+MLFLOW_MODEL_NAME = "crrt-lightgbm"
 
 # decision threshold (lower=more sensitive to catch more cases but potential more false positives)
 # [REEVALUATE AFTER ROC CURVE]
 DECISION_THRESHOLD = 0.4
 THRESHOLD_CANDIDATES = [0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]
-TUNING_N_ITER = 25
+TUNING_N_TRIALS = 25
+
+
+def make_objective(preprocessor, X_train, y_train, groups, scale_pos_weight):
+    cv = GroupKFold(n_splits=5)
+
+    def objective(trial: optuna.Trial) -> float:
+        params = {
+            "n_estimators": trial.suggest_int("n_estimators", 100, 500, step=50),
+            "learning_rate": trial.suggest_float("learning_rate", 0.02, 0.15, log=True),
+            "max_depth": trial.suggest_categorical("max_depth", [3, 4, 5, -1]),
+            "num_leaves": trial.suggest_int("num_leaves", 7, 63),
+            "min_child_samples": trial.suggest_int("min_child_samples", 5, 40),
+            "subsample": trial.suggest_float("subsample", 0.7, 1.0),
+            "colsample_bytree": trial.suggest_float("colsample_bytree", 0.7, 1.0),
+            "reg_alpha": trial.suggest_float("reg_alpha", 0.0, 2.0),
+            "reg_lambda": trial.suggest_float("reg_lambda", 0.0, 5.0),
+        }
+        model = LGBMClassifier(
+            scale_pos_weight=scale_pos_weight,
+            random_state=RANDOM_SEED,
+            n_jobs=-1,
+            verbosity=-1,
+            **params,
+        )
+        pipe = Pipeline([("prep", preprocessor), ("model", model)])
+        scores = cross_val_score(
+            pipe, X_train, y_train, groups=groups, cv=cv,
+            scoring="average_precision", n_jobs=-1,
+        )
+        return float(scores.mean())
+
+    return objective
+
 
 def main():
+    os.makedirs("reports", exist_ok=True)
+    init_mlflow()
+    with mlflow.start_run(run_name="lightgbm"):
+        _main()
+
+
+def _main():
+    artifact_paths = []
    # Load dataset from local file path
     data_path = os.getenv("BCQP_DATA_PATH", "data/synthetic_data.csv")
     df = load_and_preprocess(data_path)
@@ -56,6 +108,8 @@ def main():
     if leakage_report["leakage_found"]:
         raise RuntimeError("patient data leaked")
 
+    mlflow.log_params({"data_path": os.getenv("BCQP_DATA_PATH", "data/synthetic_data.csv"), "label_col": label_col, "group_col": group_col})
+
     X_train, X_val, X_test, y_train, y_val, y_test = get_Xy(df, splits)
     # scaling positive bc minority class so it's not ignored
     scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
@@ -64,45 +118,32 @@ def main():
     # Create preprocessing pipeline using training data columns
     preprocessor = build_preprocessor(df)
 
-    # Set up LightGBM model
-    model = LGBMClassifier(
-        n_estimators=300,
-        max_depth=4,
-        learning_rate=0.05,
+    # Bayesian hyperparameter search on training split only (GroupKFold CV)
+    objective = make_objective(preprocessor, X_train, y_train, train_df[group_col], scale_pos_weight)
+    study = optuna.create_study(direction="maximize", sampler=optuna.samplers.TPESampler(seed=RANDOM_SEED))
+    study.optimize(objective, n_trials=TUNING_N_TRIALS)
+
+    best_params = study.best_params
+    best_cv_score = float(study.best_value)
+    print("Best params:", best_params)
+    print("Best CV average precision:", best_cv_score)
+
+    study.trials_dataframe().to_csv("reports/lightgbm_optuna_trials.csv", index=False)
+    artifact_paths.append("reports/lightgbm_optuna_trials.csv")
+    print("Saved: reports/lightgbm_optuna_trials.csv")
+
+    best_model = LGBMClassifier(
         scale_pos_weight=scale_pos_weight,
         random_state=RANDOM_SEED,
         n_jobs=-1,
+        verbosity=-1,
+        **best_params,
     )
+    clf = Pipeline([("prep", preprocessor), ("model", best_model)])
+    clf.fit(X_train, y_train)
 
-    # randomized hyperparameter tuning on training split only
-    clf = Pipeline([("prep", preprocessor), ("model", model)])
-    cv = GroupKFold(n_splits=5)
-    param_distributions = {
-        "model__n_estimators": [100, 200, 300, 500],
-        "model__learning_rate": [0.03, 0.05, 0.07, 0.1],
-        "model__max_depth": [3, 4, 5, -1],
-        "model__num_leaves": [15, 31, 63],
-        "model__min_child_samples": [10, 20, 30],
-        "model__subsample": [0.8, 0.9, 1.0],
-        "model__colsample_bytree": [0.8, 0.9, 1.0],
-        "model__reg_alpha": [0, 0.5, 1],
-        "model__reg_lambda": [0, 1, 2, 5],
-    }
-    search = RandomizedSearchCV(
-        estimator=clf,
-        param_distributions=param_distributions,
-        n_iter=TUNING_N_ITER,
-        scoring="average_precision",
-        cv=cv,
-        random_state=RANDOM_SEED,
-        n_jobs=-1,
-        refit=True,
-        verbose=1,
-    )
-    search.fit(X_train, y_train, groups=train_df[group_col])
-    clf = search.best_estimator_
-    best_params = {k.replace("model__", ""): v for k, v in search.best_params_.items()}
-    best_cv_score = float(search.best_score_)
+    mlflow.log_params({f"model__{k}": v for k, v in best_params.items()})
+    mlflow.log_metric("best_cv_average_precision", best_cv_score)
 
     # threshold tuning on validation set
     val_proba = clf.predict_proba(X_val)[:, 1]
@@ -126,6 +167,7 @@ def main():
     best_threshold = float(threshold_df.iloc[0]["threshold"])
     os.makedirs("reports", exist_ok=True)
     threshold_df.to_csv("reports/lightgbm_threshold_tuning.csv", index=False)
+    artifact_paths.append("reports/lightgbm_threshold_tuning.csv")
     print("Saved: reports/lightgbm_threshold_tuning.csv")
 
     # Get feature names after preprocessing
@@ -156,11 +198,13 @@ def main():
     plt.tight_layout()
     plt.savefig("reports/lightgbm_shap_summary.png", dpi=150, bbox_inches="tight")
     plt.close("all")
+    artifact_paths.append("reports/lightgbm_shap_summary.png")
     print("Saved: reports/lightgbm_shap_summary.png")
 
     # csv of raw shap values for frontend (row=patient, col=feature shap vals)
     shap_df = pd.DataFrame(shap_values, columns=feature_names)
     shap_df.to_csv("reports/lightgbm_shap_values_test.csv", index=False)
+    artifact_paths.append("reports/lightgbm_shap_values_test.csv")
     print("Saved: reports/lightgbm_shap_values_test.csv")
 
     # Get feature importance scores from LightGBM
@@ -256,6 +300,12 @@ def main():
         "test_fn": int(test_fn),
     }
 
+    mlflow.log_param("decision_threshold", best_threshold)
+    mlflow.log_metrics({
+        k: v for k, v in metrics.items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    })
+
     # Print summary of model results
     print("Label:", label_col, "| Group:", group_col)
     print("Train/Val/Test rows:", metrics["train_rows"], metrics["val_rows"], metrics["test_rows"])
@@ -270,24 +320,28 @@ def main():
             "best_threshold": best_threshold,
             "threshold_selection_summary": threshold_df.to_dict(orient="records"),
         }, f, indent=2)
+    artifact_paths.append("reports/lightgbm_best_params.json")
     print("Saved: reports/lightgbm_best_params.json")
     # Save evaluation metrics
     with open("reports/lightgbm_metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
+    artifact_paths.append("reports/lightgbm_metrics.json")
     print("Saved: reports/lightgbm_metrics.json")
-    # Save trained model pipeline
+    # Save trained model pipeline (kept alongside the MLflow-registered copy)
     joblib.dump(clf, "reports/lightgbm_pipeline.joblib")
     print("Saved: reports/lightgbm_pipeline.joblib")
 
     # Save patient-level predictions
     val_results.to_csv("reports/lightgbm_val_predictions.csv", index=False)
     test_results.to_csv("reports/lightgbm_test_predictions.csv", index=False)
+    artifact_paths.extend(["reports/lightgbm_val_predictions.csv", "reports/lightgbm_test_predictions.csv"])
     print("Saved: reports/lightgbm_val_predictions.csv")
     print("Saved: reports/lightgbm_test_predictions.csv")
 
     # Save split leakage check results
     with open("reports/lightgbm_split_check.json", "w") as f:
         json.dump(leakage_report, f, indent=2)
+    artifact_paths.append("reports/lightgbm_split_check.json")
     print("Saved: reports/lightgbm_split_check.json")
 
     # Save confusion matrix results
@@ -308,6 +362,7 @@ def main():
 
     with open("reports/lightgbm_confusion_matrix.json", "w") as f:
         json.dump(confusion_report, f, indent=2)
+    artifact_paths.append("reports/lightgbm_confusion_matrix.json")
     print("Saved: reports/lightgbm_confusion_matrix.json")
 
     # Save false positive and false negative cases
@@ -315,6 +370,12 @@ def main():
     val_false_negatives.to_csv("reports/lightgbm_val_false_negatives.csv", index=False)
     test_false_positives.to_csv("reports/lightgbm_test_false_positives.csv", index=False)
     test_false_negatives.to_csv("reports/lightgbm_test_false_negatives.csv", index=False)
+    artifact_paths.extend([
+        "reports/lightgbm_val_false_positives.csv",
+        "reports/lightgbm_val_false_negatives.csv",
+        "reports/lightgbm_test_false_positives.csv",
+        "reports/lightgbm_test_false_negatives.csv",
+    ])
 
     print("Saved: reports/lightgbm_val_false_positives.csv")
     print("Saved: reports/lightgbm_val_false_negatives.csv")
@@ -323,11 +384,21 @@ def main():
 
     # Save feature importance results
     feature_importance_df.to_csv("reports/lightgbm_feature_importance.csv", index=False)
+    artifact_paths.append("reports/lightgbm_feature_importance.csv")
     print("Saved: reports/lightgbm_feature_importance.csv")
 
     # Print top 10 most important features
     print("Top 10 features:")
     print(feature_importance_df.head(10))
+
+    for path in artifact_paths:
+        mlflow.log_artifact(path)
+
+    mlflow.sklearn.log_model(
+        clf, name="model", registered_model_name=MLFLOW_MODEL_NAME,
+        serialization_format="cloudpickle",
+    )
+    print(f"Registered model version under '{MLFLOW_MODEL_NAME}' (stage=None).")
 
 if __name__ == "__main__":
     main()

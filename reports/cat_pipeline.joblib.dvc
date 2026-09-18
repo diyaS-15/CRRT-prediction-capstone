@@ -1,0 +1,5 @@
+outs:
+- md5: f21b0095c52db257b260dfad7684f0a4
+  size: 118305
+  hash: md5
+  path: cat_pipeline.joblib

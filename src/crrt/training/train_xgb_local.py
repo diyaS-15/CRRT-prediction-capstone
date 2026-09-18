@@ -24,6 +24,14 @@
 # comparison if real (non-synthetic) data is ever substituted in, since the
 # crrt_first_24h/crrt_25_48h overlap that made this check clean is likely a
 # synthetic-data artifact.
+#
+# Note on ParameterGrid: train_xgb.py/train_lightgbm.py switched their
+# hyperparameter search to Optuna. This script intentionally keeps
+# ParameterGrid — its purpose here isn't fast convergence to one "best"
+# config, it's an exhaustive per-fold, per-config diagnostic table
+# (reports/cv_fold_metrics.csv, cv_top_10/bottom_10_configs.csv) used to
+# characterize the whole grid for the leakage investigation above. An Optuna
+# search would only visit a handful of configs and lose that full picture.
 import os
 import json
 import numpy as np

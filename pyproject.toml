@@ -20,11 +20,16 @@ dependencies = [
     "seaborn>=0.13,<1",
     "streamlit>=1.56,<2",
     "joblib>=1.5,<2",
+    "mlflow>=3.16,<4",
+    "optuna>=5.0,<6",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8",
+]
+dvc = [
+    "dvc>=3.67,<4",
 ]
 
 [tool.pytest.ini_options]

@@ -5,8 +5,10 @@ import os
 from datetime import datetime, timedelta
 
 from src.crrt.features.preprocessing import engineer_features, FEATURE_COLS
+from src.crrt.training.mlflow_utils import init_mlflow
 
-MODEL_PATH = "reports/xgb_pipeline.joblib"
+MLFLOW_MODEL_NAME = "crrt-xgb"
+FALLBACK_MODEL_PATH = "reports/xgb_pipeline.joblib"
 DECISION_THRESHOLD = 0.5
 
 st.set_page_config(page_title="CRRT Risk Predictor", layout="centered")
@@ -14,9 +16,30 @@ st.set_page_config(page_title="CRRT Risk Predictor", layout="centered")
 
 @st.cache_resource
 def load_model():
-    if not os.path.exists(MODEL_PATH):
-        raise FileNotFoundError(f"Model file not found: {MODEL_PATH}")
-    return joblib.load(MODEL_PATH)
+    """Load whichever model version is tagged "Production" in the MLflow
+    Model Registry -- that's the explicit, auditable answer to "which model
+    is live," set by promote_model.py rather than by whichever .joblib file
+    happens to be sitting in reports/. Falls back to the local file only if
+    the registry has no Production version yet (e.g. a fresh clone before
+    promote_model.py has ever been run), so the app still works out of the
+    box for a first-time demo.
+    """
+    try:
+        import mlflow.sklearn
+        init_mlflow()
+        # sklearn.load_model (not pyfunc.load_model) so we get back the real
+        # Pipeline object with .predict_proba, not just a .predict-only wrapper.
+        model = mlflow.sklearn.load_model(f"models:/{MLFLOW_MODEL_NAME}/Production")
+        st.session_state["model_source"] = f"MLflow Registry: {MLFLOW_MODEL_NAME}/Production"
+        return model
+    except Exception as registry_error:
+        if not os.path.exists(FALLBACK_MODEL_PATH):
+            raise FileNotFoundError(
+                f"No Production model in the MLflow registry ({registry_error}) "
+                f"and no fallback file at {FALLBACK_MODEL_PATH}."
+            )
+        st.session_state["model_source"] = f"local fallback file: {FALLBACK_MODEL_PATH} (no Production model registered yet)"
+        return joblib.load(FALLBACK_MODEL_PATH)
 
 
 def build_raw_row(
@@ -78,6 +101,7 @@ st.write("Enter patient information below and click **Predict**.")
 
 try:
     model = load_model()
+    st.caption(f"Serving model: {st.session_state.get('model_source', 'unknown')}")
 except Exception as e:
     st.error("Unable to load the model.")
     st.code(str(e))

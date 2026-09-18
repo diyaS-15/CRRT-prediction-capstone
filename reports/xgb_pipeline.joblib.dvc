@@ -1,0 +1,5 @@
+outs:
+- md5: d587210e89bf92c5dc67c3bd62434b9d
+  size: 160024
+  hash: md5
+  path: xgb_pipeline.joblib

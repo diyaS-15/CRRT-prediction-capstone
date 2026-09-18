@@ -1,9 +1,16 @@
 # Train and evaluate an CatBoost algorithm model for CRRT prediction
+#
+# Every run is logged to MLflow and registered as a new (unpromoted) version
+# of the "crrt-catboost" model. This script keeps fixed hyperparameters
+# rather than a search (see train_xgb.py/train_lightgbm.py for the Optuna
+# searches) since it was already fixed-hyperparameter before this pass.
 import os
 import json
 import joblib
 import pandas as pd
 
+import mlflow
+import mlflow.sklearn
 from sklearn.pipeline import Pipeline
 from sklearn.metrics import accuracy_score, confusion_matrix, recall_score, precision_score, f1_score
 
@@ -11,13 +18,27 @@ from catboost import CatBoostClassifier
 from ..data.split import make_patient_level_split, get_Xy
 from ..features.preprocessing import load_and_preprocess, TARGET_COL, RANDOM_SEED
 from .common import build_preprocessor, verify_no_patient_leakage, safe_auc, safe_prauc, get_metrics
+from .mlflow_utils import init_mlflow
+
+MLFLOW_MODEL_NAME = "crrt-catboost"
 
 # decision threshold (lower=more sensitive to catch more cases but potential more false positives)
 # tuned per-run on the validation set (see THRESHOLD_CANDIDATES) rather than fixed,
 # since missing a true CRRT case (false negative) is clinically costlier than a false alarm.
 THRESHOLD_CANDIDATES = [0.30, 0.35, 0.40, 0.45, 0.50, 0.55, 0.60, 0.65, 0.70]
 
+CATBOOST_PARAMS = dict(iterations=100, learning_rate=0.1, depth=6)
+
+
 def main():
+    os.makedirs("reports", exist_ok=True)
+    init_mlflow()
+    with mlflow.start_run(run_name="catboost"):
+        _main()
+
+
+def _main():
+    artifact_paths = []
    # Load dataset from local file path
     data_path = os.getenv("BCQP_DATA_PATH", "data/synthetic_data.csv")
     df = load_and_preprocess(data_path)
@@ -47,10 +68,12 @@ def main():
     print("Leakage check:", leakage_report)
     # error to stop training if there's a data leak 
     if leakage_report["leakage_found"]:
-        raise RuntimeError("patient data leaked") 
-    
+        raise RuntimeError("patient data leaked")
+
+    mlflow.log_params({"data_path": os.getenv("BCQP_DATA_PATH", "data/synthetic_data.csv"), "label_col": label_col, "group_col": group_col})
+
     X_train, X_val, X_test, y_train, y_val, y_test = get_Xy(df, splits)
-    # scaling positive bc minority class so it's not ignored 
+    # scaling positive bc minority class so it's not ignored
     scale_pos_weight = (y_train == 0).sum() / (y_train == 1).sum()
 
     print(f"scale_pos_weight: {scale_pos_weight:.2f}  (train positives: {(y_train==1).sum()}, negatives: {(y_train==0).sum()})")
@@ -61,12 +84,12 @@ def main():
     # Set up CatBoost model; tell it to care more about the positive (CRRT=1)
     # class since CRRT=1 is rare, so give it higher weight
     model = CatBoostClassifier(
-        iterations=100,
-        learning_rate=0.1,
-        depth=6,
+        **CATBOOST_PARAMS,
         verbose=0,
         class_weights=[1.0, float(scale_pos_weight)],  # [weight for class 0, weight for class 1]
     )
+    mlflow.log_params({f"model__{k}": v for k, v in CATBOOST_PARAMS.items()})
+    mlflow.log_param("scale_pos_weight", float(scale_pos_weight))
 
     clf = Pipeline([("prep", preprocessor), ("model", model)])
     clf.fit(X_train, y_train)
@@ -94,6 +117,7 @@ def main():
     best_threshold = float(threshold_df.iloc[0]["threshold"])
     os.makedirs("reports", exist_ok=True)
     threshold_df.to_csv("reports/cat_threshold_tuning.csv", index=False)
+    artifact_paths.append("reports/cat_threshold_tuning.csv")
     print("Saved: reports/cat_threshold_tuning.csv")
     print("Best threshold:", best_threshold)
 
@@ -189,6 +213,12 @@ def main():
         "test_fn": int(test_fn),
     }
 
+    mlflow.log_param("decision_threshold", best_threshold)
+    mlflow.log_metrics({
+        k: v for k, v in metrics.items()
+        if isinstance(v, (int, float)) and not isinstance(v, bool)
+    })
+
     # Print summary of model results
     print("Label:", label_col, "| Group:", group_col)
     print("Train/Val/Test rows:", metrics["train_rows"], metrics["val_rows"], metrics["test_rows"])
@@ -200,20 +230,23 @@ def main():
     # Save evaluation metrics
     with open("reports/cat_metrics.json", "w") as f:
         json.dump(metrics, f, indent=2)
+    artifact_paths.append("reports/cat_metrics.json")
     print("Saved: reports/cat_metrics.json")
-    # Save trained model pipeline
+    # Save trained model pipeline (kept alongside the MLflow-registered copy)
     joblib.dump(clf, "reports/cat_pipeline.joblib")
     print("Saved: reports/cat_pipeline.joblib")
 
     # Save patient-level predictions
     val_results.to_csv("reports/cat-val_predictions.csv", index=False)
     test_results.to_csv("reports/cat-test_predictions.csv", index=False)
+    artifact_paths.extend(["reports/cat-val_predictions.csv", "reports/cat-test_predictions.csv"])
     print("Saved: reports/cat-val_predictions.csv")
     print("Saved: reports/cat-test_predictions.csv")
 
     # Save split leakage check results
     with open("reports/cat-split_check.json", "w") as f:
         json.dump(leakage_report, f, indent=2)
+    artifact_paths.append("reports/cat-split_check.json")
     print("Saved: reports/cat-split_check.json")
 
     # Save confusion matrix results
@@ -234,6 +267,7 @@ def main():
 
     with open("reports/cat-confusion_matrix.json", "w") as f:
         json.dump(confusion_report, f, indent=2)
+    artifact_paths.append("reports/cat-confusion_matrix.json")
     print("Saved: reports/cat-confusion_matrix.json")
 
     # Save false positive and false negative cases
@@ -241,7 +275,13 @@ def main():
     val_false_negatives.to_csv("reports/cat-val_false_negatives.csv", index=False)
     test_false_positives.to_csv("reports/cat-test_false_positives.csv", index=False)
     test_false_negatives.to_csv("reports/cat-test_false_negatives.csv", index=False)
-    
+    artifact_paths.extend([
+        "reports/cat-val_false_positives.csv",
+        "reports/cat-val_false_negatives.csv",
+        "reports/cat-test_false_positives.csv",
+        "reports/cat-test_false_negatives.csv",
+    ])
+
     print("Saved: reports/cat-val_false_positives.csv")
     print("Saved: reports/cat-val_false_negatives.csv")
     print("Saved: reports/cat-test_false_positives.csv")
@@ -249,11 +289,21 @@ def main():
 
     # Save feature importance results
     feature_importance_df.to_csv("reports/cat_feature_importance.csv", index=False)
+    artifact_paths.append("reports/cat_feature_importance.csv")
     print("Saved: reports/cat_feature_importance.csv")
 
     # Print top 10 most important features
     print("Top 10 features:")
     print(feature_importance_df.head(10))
+
+    for path in artifact_paths:
+        mlflow.log_artifact(path)
+
+    mlflow.sklearn.log_model(
+        clf, name="model", registered_model_name=MLFLOW_MODEL_NAME,
+        serialization_format="cloudpickle",
+    )
+    print(f"Registered model version under '{MLFLOW_MODEL_NAME}' (stage=None).")
 
 if __name__ == "__main__":
     main()
